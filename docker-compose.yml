@@ -1,0 +1,72 @@
+# LandslideGuard AI - full stack for local/Docker demo
+#
+#   docker compose up --build
+#     frontend -> http://localhost:5173   (nginx, proxies /api to backend)
+#     backend  -> http://localhost:8000   (FastAPI, docs at /docs)
+#
+# The backend image is built from the REPOSITORY ROOT so that ml/ and data/ can
+# be baked into the image; the ML model must be present at runtime or the app
+# silently falls back to rule-based scoring.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: landslideguard-backend:latest
+    container_name: lg-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_MODE: DEMO
+      # /app/data is a bind mount, so the SQLite file persists across restarts.
+      DATABASE_URL: sqlite:////app/data/landslideguard.db
+      DATA_DIR: /app/data
+      MODEL_DIR: /app/ml/model
+      ENVIRONMENT: development
+      # Demo-only signing key. Override with a real secret before any public
+      # deployment (backend refuses to boot with this value when
+      # ENVIRONMENT=production).
+      JWT_SECRET: ${JWT_SECRET:-change-me-landslideguard-demo-secret}
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@landslideguard.ai}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-admin123}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080}
+    volumes:
+      # Seed CSVs + uploaded datasets + the SQLite database.
+      - ./data:/app/data
+      # Named volume (not a bind mount): seeded from the model already baked
+      # into the image, so a clean clone still gets a working model, while
+      # retraining via the admin panel survives container restarts.
+      - lg_ml_model:/app/ml/model
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Left empty on purpose: the bundle then calls same-origin "/api/...",
+        # which nginx proxies to the backend. (VITE_* values are inlined at
+        # BUILD time, so this cannot be a runtime environment variable.)
+        VITE_API_URL: ""
+    image: landslideguard-frontend:latest
+    container_name: lg-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  lg_ml_model:

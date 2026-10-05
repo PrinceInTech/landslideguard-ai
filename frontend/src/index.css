@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-slate-950 text-slate-100 font-sans;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0f172a;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-800 bg-surface p-5 shadow-card;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-outline {
+    @apply inline-flex items-center gap-2 rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-800;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-700 bg-surface-light px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-brand;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400;
+  }
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #0b1220;
+  font-family: inherit;
+  border-radius: 0.75rem;
+}
+.leaflet-popup-content-wrapper {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 0.5rem;
+}
+.leaflet-popup-tip {
+  background: #1e293b;
+}
+.leaflet-control-attribution {
+  background: rgba(15, 23, 42, 0.8);
+  color: #64748b;
+  font-size: 10px;
+}
+.leaflet-control-attribution a {
+  color: #94a3b8;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}

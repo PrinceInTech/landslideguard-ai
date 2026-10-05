@@ -1,0 +1,43 @@
+# LandslideGuard AI - backend build context (project root)
+#
+# This file governs the backend image build, whose context is the repository
+# root (the image needs both ml/ and data/).
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Runtime state (never baked into the image) ---
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# --- Frontend (not used by the backend image) ---
+frontend/node_modules/
+frontend/dist/
+frontend/
+
+# --- Docs / VCS / tooling ---
+docs/
+.git/
+.gitignore
+.github/
+*.md
+run.ps1
+docker-compose.yml
+.env
+.env.*
+Dockerfile
+.dockerignore
+README.md
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

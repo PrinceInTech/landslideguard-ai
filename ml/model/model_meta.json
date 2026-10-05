@@ -1,0 +1,71 @@
+{
+  "model_type": "RandomForestClassifier",
+  "trained_on": "DEMO/sample dataset (not production data)",
+  "dataset": "data/historical_landslide_data.csv",
+  "n_samples": 1470,
+  "n_features": 12,
+  "accuracy": 0.8231292517006803,
+  "precision": 0.8842105263157894,
+  "recall": 0.8484848484848485,
+  "f1_score": 0.865979381443299,
+  "confusion_matrix": [
+    [
+      74,
+      22
+    ],
+    [
+      30,
+      168
+    ]
+  ],
+  "feature_importance": {
+    "soil_moisture": 0.17967186095995588,
+    "rainfall": 0.1698674192354809,
+    "rainfall_intensity": 0.1340491995795727,
+    "slope": 0.1288270809815713,
+    "elevation": 0.10142579322015757,
+    "humidity": 0.09923712446222369,
+    "temperature": 0.05133025867594358,
+    "distance_to_drain": 0.04256614136431262,
+    "historical_occurrence": 0.03996307371934214,
+    "soil_type_enc": 0.018595857013805523,
+    "land_cover_enc": 0.018582952291725623,
+    "rock_type_enc": 0.015883238495908582
+  },
+  "feature_columns": [
+    "rainfall",
+    "rainfall_intensity",
+    "soil_moisture",
+    "temperature",
+    "humidity",
+    "elevation",
+    "slope",
+    "historical_occurrence",
+    "distance_to_drain",
+    "land_cover_enc",
+    "soil_type_enc",
+    "rock_type_enc"
+  ],
+  "calibration": {
+    "min_prob": 0.0,
+    "max_prob": 1.0
+  },
+  "risk_buckets": {
+    "LOW": [
+      0,
+      30
+    ],
+    "MODERATE": [
+      31,
+      60
+    ],
+    "HIGH": [
+      61,
+      80
+    ],
+    "CRITICAL": [
+      81,
+      100
+    ]
+  }
+}

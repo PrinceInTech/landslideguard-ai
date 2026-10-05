@@ -1,0 +1,21 @@
+# LandslideGuard AI - backend image (build context: ./backend)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local database and logs are runtime state, not build inputs.
+*.db
+*.sqlite
+*.sqlite3
+*.log
+tests/
+
+# Not needed inside the image.
+Dockerfile
+.dockerignore
+README.md

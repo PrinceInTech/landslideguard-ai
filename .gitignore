@@ -1,0 +1,61 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+__pypackages/
+
+# --- Runtime databases (recreated from data/ on first start) ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- ML artifacts ---
+# NOTE: the trained model and preprocessors ARE intentionally tracked.
+# They are required for a clean clone, the Docker named-volume seed, and
+# production deploys to start with a loaded model instead of 503-ing.
+# Only generated/intermediate artifacts are ignored here.
+ml/data/*
+!ml/data/.gitkeep
+*.tmp
+
+# --- Node ---
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Env ---
+# .env.example is tracked; real .env files are not.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- OS / IDE / editors ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Logs ---
+*.log
+logs/

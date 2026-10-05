@@ -1,0 +1,61 @@
+# LandslideGuard AI - Render blueprint (backend)
+#
+# Deploy with:  New > Blueprint > point at this repository
+#
+# The service root is the REPOSITORY ROOT (not backend/), because the backend
+# needs the sibling ml/ and data/ directories to load the model, seed locations
+# and re-train on demand.
+#
+# NOTE: Render's filesystem is ephemeral by default, so the SQLite database and
+# any retrained model are lost on redeploy. See the disk block below - attach a
+# disk and point DATABASE_URL / DATA_DIR / MODEL_DIR at it for persistence.
+
+services:
+  - type: web
+    name: landslideguard-api
+    runtime: python
+    plan: starter # needs a disk; use `free` to accept ephemeral resets
+    region: singapore # closest Render region to the NER; change as preferred
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+
+    # --- Required: generate real values, do not commit them -----------------
+    # JWT_SECRET:      python -c "import secrets; print(secrets.token_urlsafe(48))"
+    # DEMO_ADMIN_PASSWORD: anything except the default "admin123"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        sync: false # set in the Render dashboard
+      - key: DEMO_ADMIN_PASSWORD
+        sync: false # set in the Render dashboard
+      - key: DEMO_ADMIN_EMAIL
+        value: admin@landslideguard.ai
+      - key: DATA_MODE
+        value: DEMO
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 480
+      # Optional: enables LIVE weather instead of deterministic DEMO data.
+      # - key: OPENWEATHER_API_KEY
+      #   sync: false
+      # Must list the deployed frontend origin(s), comma separated.
+      - key: CORS_ORIGINS
+        sync: false # e.g. https://your-frontend.vercel.app
+
+    disk:
+      name: landslideguard-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    # Point the app at the mounted disk so the DB and model survive redeploys.
+    # These override the auto-detected paths.
+    # (Set these as env vars once the disk is attached.)
+    #
+    # - key: DATABASE_URL
+    #   value: sqlite:////var/data/landslideguard.db
+    # - key: DATA_DIR
+    #   value: /var/data/data
+    # - key: MODEL_DIR
+    #   value: /var/data/ml/model
