@@ -66,11 +66,26 @@ Aggregated risk overview.
     "name": "Cherrapunji", "state": "Meghalaya",
     "risk_score": 89.3, "risk_level": "CRITICAL"
   },
-  "data_source": "DEMO"
+  "data_source": "DEMO",
+  "data_mode_configured": "LIVE",
+  "live_degraded": true
 }
 ```
 Counts are weather-dependent (DEMO weather is deterministic per 15-minute
 window), so the numbers above will differ from yours.
+
+The three source fields are deliberately distinct:
+
+| Field | Meaning |
+| ----- | ------- |
+| `data_mode_configured` | what `DATA_MODE` + the API key imply (`LIVE` only if both are set) |
+| `data_source` | the source actually served for the most recent readings |
+| `live_degraded` | `true` when `LIVE` is configured but the provider fell back to DEMO |
+
+`live_degraded` is the field to check before trusting a `LIVE` deployment: a
+network or quota failure at OpenWeatherMap silently degrades to simulated
+readings, and this flag is how that state becomes visible instead of a stale
+`DEMO` string. The UI renders it as `LIVE UNAVAILABLE — DEMO DATA`.
 
 ### `POST /api/predict`
 Run the ML model on given environmental features. Returns score, level,
@@ -159,11 +174,30 @@ Anonymous → `401`; authenticated non-admin → `403`.
 minute; it returns `500` with a readable `detail` if the `ml/` directory was not
 deployed alongside the backend.
 
+`upload-dataset` accepts `.csv` only, rejects empty files with `400`, and caps
+the body at `MAX_UPLOAD_MB` (default 50) with `413`. The body is read in 1 MB
+chunks and the new file is written to a temporary path then swapped in, so an
+aborted upload cannot truncate the last known-good dataset. nginx enforces the
+same ceiling via `client_max_body_size` so oversized bodies are refused at the
+proxy instead of reaching the app.
+
 ## Location CRUD
 
 `POST /api/locations`, `PUT /api/locations/{location_id}`,
 `DELETE /api/locations/{location_id}` — same shape as the location object,
-validated with Pydantic.
+validated with Pydantic. `PUT` accepts partial updates and applies the same
+bounds as create, so an out-of-range latitude or a negative slope returns `422`.
+
+`DELETE` removes the location's dependent environmental history, predictions,
+and alerts in the same transaction, then returns `204`. The cleanup is
+explicit because SQLite here runs with `PRAGMA foreign_keys` **off** —
+SQLAlchemy does not enable it and the models define no ORM relationships. With
+enforcement off the bare `DELETE` would still succeed, so the real risk is not
+an error but silent orphans: rows in `environmental_data`, `predictions` and
+`alerts` left pointing at a location that no longer exists. A delete the
+database rejects for any other reason returns `409` with a readable `detail`
+rather than a stack trace; that branch is defensive and is not reachable via a
+foreign key in the current configuration.
 
 ## Error handling
 
@@ -173,7 +207,27 @@ Standard FastAPI semantics:
 - `401` invalid/expired token, or bad credentials
 - `403` authenticated but not an admin
 - `404` missing resource
+- `409` delete rejected by the database (defensive branch; see Location CRUD)
+- `413` upload exceeds `MAX_UPLOAD_MB`
 - `422` Pydantic validation failure (e.g. out-of-range features, bad alert status)
 - `500` unexpected failure, with a readable `detail`
 - Missing model / weather API never crash — the app falls back to a deterministic
   rule-based predictor or DEMO weather and reports `data_source` and `model`.
+
+## Authorization model
+
+| Surface | Requirement |
+| ------- | ----------- |
+| Read-only endpoints (`/api/locations`, `/risk-summary`, `/predict`, `/analytics`, `/alerts` GET) | none |
+| Write endpoints (`POST`/`PUT`/`DELETE` on locations and alerts) | none — see the note below |
+| `/api/admin/**` | valid JWT **and** `role == "admin"` |
+| Self-registration | always creates `role == "viewer"` |
+
+The seeded demo admin (`DEMO_ADMIN_EMAIL`) is the only account that starts as an
+admin; `viewer` cannot reach `/api/admin/**` and the UI hides the Admin nav
+entry for them.
+
+**Known limitation:** location and alert *writes* are currently unauthenticated,
+so anyone who can reach the API can create or delete locations. This is
+acceptable for a single-user demo but is not safe on a public deployment.
+Adding a `get_current_user` dependency to those routes is the intended fix.

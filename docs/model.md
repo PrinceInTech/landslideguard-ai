@@ -67,23 +67,73 @@ Per-class (test split, n=294):
 
 Confusion matrix: `[[74, 22], [30, 168]]`.
 
-These are honest numbers on *synthetic* data and are labelled as such in the
-README and UI. Real deployment requires properly labeled production data.
-**No model accuracy is ever inflated.** The visible gap between the two classes
-is the honest weak point of the model on this dataset — it is better at
-confirming landslide conditions than at catching every borderline case.
+These numbers are exactly reproducible on the *synthetic* dataset and are
+labelled as such in the README and UI. Real deployment requires properly
+labelled production data.
+
+### Important caveat: label leakage in the DEMO dataset
+
+The DEMO generator does not simulate landslides independently of the features.
+In `ml/data/generate_data.py` the label is computed as a thresholded linear
+score over seven of the very features the model receives — `temperature` and
+`humidity` do **not** enter the score directly:
+
+```
+risk_input = 0.45*rainfall + 0.60*rainfall_intensity + 0.55*soil_moisture
+           + 2.2*slope + 0.02*elevation + 25*historical_occurrence
+           + (0 if distance_to_drain < 1.5 else 6) + U(-8, 8)
+landslide  = 1 if risk_input > 185 else 1/0 with fixed probabilities above 140 and 95
+```
+
+So the classifier is largely learning to recover a known rule rather than
+generalising from physical process. **The 0.8231 accuracy is therefore an upper
+bound inflated by construction and must not be read as real-world performance.**
+It is reported here so the figure quoted anywhere else in the project can be
+traced to its true meaning.
+
+The single-source cause of the wide gap between classes is the same artefact:
+the label is close to deterministic, so borderline cases are inherently
+ambiguous.
+
+`ml/model/model_meta.json` records this explicitly under `label_leakage` so a
+future reader cannot mistake the metrics for a validated field result.
+
+**To obtain a meaningful accuracy estimate**, retrain on real labelled
+landslide inventories (e.g. USGS landslide catalog data or state geological
+records) with the label supplied by observation rather than computed from the
+features, and validate on a geographically held-out split. `ml/train.py`
+accepts any CSV with the same column contract, so only the dataset needs to be
+replaced.
+
+## Model metadata
+
+`ml/model/model_meta.json` records, alongside the metrics:
+
+- `model_version` (`1.1.0`) and `trained_at_utc`
+- `library_versions` — scikit-learn, numpy, pandas, joblib, Python
+- `hyperparameters` — including the split configuration and `random_state`
+- `dataset` (repo-relative path) and `dataset_sha256`, so the exact file the
+  model was fitted on can be verified
+- `n_samples_train` / `n_samples_test` and class balance
+- `risk_thresholds` — a snapshot of the boundaries in `app/risk.py`, which is
+  the single source of truth at runtime
+- `label_leakage` — the caveat above, recorded in the artifact itself
 
 ## Score calibration
 
 `risk_score = 100 * probability^1.6` (monotonic transform that spreads moderate
-conditions into the middle bands), clipped to 0–100. Buckets:
+conditions into the middle bands), clipped to 0–100.
 
-| Score      | Level    |
-| ---------- | -------- |
-| 0–30       | LOW      |
-| 31–60      | MODERATE |
-| 61–80      | HIGH     |
-| 81–100     | CRITICAL |
+Boundaries live in `backend/app/risk.py` (`RISK_LEVELS`) and are imported by the
+predictor, the API schemas, and the analytics service, so all three cannot drift
+apart. Upper bounds are inclusive:
+
+| Score  | Level    |
+| ------ | -------- |
+| ≤ 30   | LOW      |
+| ≤ 60   | MODERATE |
+| ≤ 80   | HIGH     |
+| ≤ 100  | CRITICAL |
 
 `confidence` is derived from how far the probability sits from the 0.5 decision
 threshold (roughly 55–95%).

@@ -9,6 +9,9 @@ import { riskMeta } from '../utils/risk'
 
 export default function RiskMapPage() {
   const locs = usePolling('/api/locations', 20000)
+  // Same source of truth as the Dashboard header: the provider-level source,
+  // not a per-row value defaulted to DEMO by this component.
+  const summary = usePolling('/api/risk-summary', 20000)
   const [selected, setSelected] = useState(null)
 
   const locations = locs.data || []
@@ -27,7 +30,10 @@ export default function RiskMapPage() {
           <h1 className="text-2xl font-extrabold text-slate-100">Risk Map</h1>
           <p className="text-sm text-slate-400">Geospatial landslide risk across Northeast India</p>
         </div>
-        <DataSourceBadge source={locations[0]?.environmental?.data_source || 'DEMO'} />
+        <DataSourceBadge
+          source={summary.data?.data_source}
+          degraded={summary.data?.live_degraded}
+        />
       </div>
 
       <PageState loading={locs.loading} error={locs.error} onRetry={locs.reload}>

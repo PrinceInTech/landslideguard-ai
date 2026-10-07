@@ -4,17 +4,12 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.risk import classify_risk
 
-# ---------- Risk helpers ----------
-def classify_risk(score: float) -> str:
-    score = max(0.0, min(100.0, score))
-    if score <= 30:
-        return "LOW"
-    if score <= 60:
-        return "MODERATE"
-    if score <= 80:
-        return "HIGH"
-    return "CRITICAL"
+# Re-exported for backwards compatibility: callers previously imported the
+# risk helper from this module. Canonical definition lives in app.risk.
+# (Deliberately no `__all__`: this module exports the request/response models
+# below as well, and a partial `__all__` would misrepresent its contents.)
 
 
 # ---------- Auth ----------
@@ -62,13 +57,20 @@ class LocationCreate(LocationBase):
 
 
 class LocationUpdate(BaseModel):
-    name: Optional[str] = None
-    state: Optional[str] = None
-    district: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    elevation: Optional[float] = None
-    slope: Optional[float] = None
+    """Partial update.
+
+    Every field carries the same bounds as LocationBase. Without them a PATCH
+    could store an out-of-range latitude or a negative slope, because the
+    optional type alone does not constrain the value.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    state: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    district: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    elevation: Optional[float] = Field(default=None, ge=0, le=9000)
+    slope: Optional[float] = Field(default=None, ge=0, le=90)
 
 
 class LocationOut(LocationBase):

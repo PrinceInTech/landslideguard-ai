@@ -1,17 +1,22 @@
 """Location routes + risk summary."""
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
-from app.models import Location
+from app.models import Alert, EnvironmentalData, Location, Prediction
 from app.schemas import LocationCreate, LocationOut, LocationUpdate
 from app.services.data_provider import weather_provider
 from app.services.location_service import location_to_dict, refresh_risks
 from app.ml import predictor
+from app.risk import RISK_LEVELS
 
 router = APIRouter(prefix="/api", tags=["locations"])
+
+logger = logging.getLogger(__name__)
 
 
 def _with_env(loc: Location, db: Session) -> dict:
@@ -84,8 +89,36 @@ def delete_location(location_id: int, db: Session = Depends(get_db)):
     loc = db.query(Location).filter(Location.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found")
+
+    # Dependent rows (environmental history, predictions, alerts) carry a
+    # `location_id` column referencing this row. SQLite here runs with
+    # `PRAGMA foreign_keys` OFF — SQLAlchemy does not enable it and the models
+    # define no ORM relationships — so nothing raises today: a bare
+    # `db.delete(loc)` would succeed and silently leave orphaned dependents.
+    # Remove them explicitly so the deletion is consistent rather than leaving
+    # rows that point at a location that no longer exists.
+    name = loc.name
+    db.query(EnvironmentalData).filter(EnvironmentalData.location_id == loc.id).delete(
+        synchronize_session=False
+    )
+    db.query(Prediction).filter(Prediction.location_id == loc.id).delete(
+        synchronize_session=False
+    )
+    db.query(Alert).filter(Alert.location_id == loc.id).delete(synchronize_session=False)
     db.delete(loc)
-    db.commit()
+    # Defensive: with SQLite FK enforcement off this branch is not reachable
+    # via a foreign key today, but a UNIQUE/NOT NULL violation, a future
+    # enabled `PRAGMA foreign_keys`, or another engine must not surface as a
+    # bare 500.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.exception("Failed to delete location id=%s name=%r", location_id, name)
+        raise HTTPException(
+            status_code=409,
+            detail="The location could not be deleted because other records depend on it",
+        ) from exc
 
 
 @router.get("/risk-summary")
@@ -113,14 +146,14 @@ def risk_summary(db: Session = Depends(get_db)):
             "risk_score": max_loc.risk_score, "risk_level": max_loc.risk_level,
         } if max_loc else None,
         "data_source": weather_provider.source,
+        "data_mode_configured": weather_provider.configured_source,
+        "live_degraded": weather_provider.degraded,
     }
 
 
 def _overall(counts):
-    if counts.get("CRITICAL", 0) > 0:
-        return "CRITICAL"
-    if counts.get("HIGH", 0) > 0:
-        return "HIGH"
-    if counts.get("MODERATE", 0) > 0:
-        return "MODERATE"
-    return "LOW"
+    """Roll individual locations up to the worst severity present."""
+    for level, _upper in reversed(RISK_LEVELS):
+        if counts.get(level, 0) > 0:
+            return level
+    return RISK_LEVELS[0][0]

@@ -5,7 +5,7 @@ import { PageState } from '../components/States'
 import { useAuth } from '../hooks/useAuth'
 
 export default function Admin() {
-  const { isAuthed } = useAuth()
+  const { isAdmin } = useAuth()
   const [stats, setStats] = useState(null)
   const [alerts, setAlerts] = useState([])
   const [settings, setSettings] = useState(null)
@@ -68,12 +68,17 @@ export default function Admin() {
     }
   }
 
-  if (!isAuthed) {
+  // The backend enforces this with get_current_admin on every /api/admin route;
+  // this guard exists so a signed-in viewer is told the truth instead of
+  // watching every panel fail with 403.
+  if (!isAdmin) {
     return (
       <div className="card flex flex-col items-center gap-3 py-16 text-center">
         <ShieldCheck className="h-10 w-10 text-slate-600" />
         <p className="font-bold text-slate-200">Admin access required</p>
-        <p className="text-sm text-slate-400">Please sign in with an admin account to manage the system.</p>
+        <p className="text-sm text-slate-400">
+          Please sign in with an admin account to manage the system.
+        </p>
       </div>
     )
   }

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 export function useAuth() {
   const [user, setUser] = useState(() => {
@@ -21,5 +21,19 @@ export function useAuth() {
     setUser(null)
   }, [])
 
-  return { user, setSession, logout, isAuthed: Boolean(user) }
+  // The API layer broadcasts this when a request comes back 401 (expired or
+  // revoked token). Sync local state so guards stop treating us as signed in.
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null)
+    window.addEventListener('lg:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('lg:unauthorized', onUnauthorized)
+  }, [])
+
+  return {
+    user,
+    setSession,
+    logout,
+    isAuthed: Boolean(user),
+    isAdmin: user?.role === 'admin',
+  }
 }

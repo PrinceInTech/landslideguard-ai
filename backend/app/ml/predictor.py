@@ -16,13 +16,7 @@ import joblib
 import numpy as np
 
 from app.config import settings
-
-_RISK_BUCKETS = {
-    "LOW": (0, 30, 10),
-    "MODERATE": (31, 60, 20),
-    "HIGH": (61, 80, 30),
-    "CRITICAL": (81, 100, 40),
-}
+from app.risk import classify_risk
 
 
 def _load_model():
@@ -121,17 +115,6 @@ def predict(features: dict, location_data: dict = None):
         "data_source": settings.DATA_MODE,
     }
     return result
-
-
-def classify_risk(score: float) -> str:
-    score = max(0.0, min(100.0, score))
-    if score <= 30:
-        return "LOW"
-    if score <= 60:
-        return "MODERATE"
-    if score <= 80:
-        return "HIGH"
-    return "CRITICAL"
 
 
 def _confidence(proba, risk_level):

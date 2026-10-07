@@ -24,12 +24,13 @@ const NAV = [
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/locations', label: 'Locations', icon: MapPin },
   { to: '/ai-insights', label: 'AI Insights', icon: Sparkles },
-  { to: '/admin', label: 'Admin', icon: ShieldCheck },
+  // Admin-only: hidden from viewers, who would only get 403 from the API.
+  { to: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function Sidebar({ open, onClose }) {
-  const { logout } = useAuth()
+  const { logout, isAdmin } = useAuth()
   const navigate = useNavigate()
 
   const handleLogout = () => {
@@ -58,7 +59,7 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {NAV.filter((item) => !item.adminOnly || isAdmin).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -71,7 +72,7 @@ export default function Sidebar({ open, onClose }) {
                 }`
               }
             >
-              <Icon className="h-4.5 w-4.5 h-5 w-5" />
+              <Icon className="h-5 w-5" />
               {label}
             </NavLink>
           ))}

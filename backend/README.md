@@ -8,15 +8,33 @@ FastAPI backend for the AI-based early warning and landslide risk monitoring sys
 cd backend
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-pip install -r requirements.txt
+pip install -r requirements.txt          # runtime dependencies
+pip install -r requirements-dev.txt      # test dependencies (pytest, httpx)
 
 # From the project root (landslideguard-ai/) so paths resolve:
 cd ..
 uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8001
 ```
 
+`requirements.txt` holds everything the server needs at runtime and is what a
+deployment installs. `requirements-dev.txt` holds only the test tooling and
+should be installed in development and CI, not in production.
+
 The server auto-seeds 30 monitoring locations and computes initial risk levels
 on startup. API docs: http://127.0.0.1:8001/docs
+
+## Tests
+
+Tests are run with **pytest**:
+
+```bash
+cd backend
+pytest -q
+```
+
+Configuration lives in `pytest.ini`. The suite builds its own temporary SQLite
+database under the system temp directory, deletes it when the run finishes, and
+never writes to the repository databases.
 
 ## Structure
 

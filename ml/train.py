@@ -7,13 +7,17 @@ Usage (from project root):
     python ../../ml/train.py        (or)
     python -m ml.train               (must run with ml/ on sys.path)
 """
+import hashlib
 import json
 import os
+import platform
 import sys
+from datetime import datetime, timezone
 
 import joblib
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -30,6 +34,26 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_PATH = os.path.join(PROJECT_ROOT, "data", "historical_landslide_data.csv")
 MODEL_DIR = os.path.join(PROJECT_ROOT, "ml", "model")
 os.makedirs(MODEL_DIR, exist_ok=True)
+
+# Make `app.risk` importable so the recorded thresholds come from the same
+# module the API uses at inference time. Falls back to an inline copy when this
+# script is run without the backend on the path (e.g. `python ml/train.py`).
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
+try:
+    from app.risk import RISK_LEVELS
+except ImportError:  # pragma: no cover - exercised only outside the repo layout
+    RISK_LEVELS = [
+        ("LOW", 30.0),
+        ("MODERATE", 60.0),
+        ("HIGH", 80.0),
+        ("CRITICAL", 100.0),
+    ]
+
+# Bumped whenever the feature set, algorithm, or thresholds change, so a stored
+# model can be traced back to the code that produced it.
+MODEL_VERSION = "1.1.0"
+
+RANDOM_STATE = 42
 
 FEATURE_COLUMNS = [
     "rainfall",
@@ -99,7 +123,7 @@ def main():
 
     # ---- Split ----
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
     )
 
     print(f"\nTraining samples: {len(X_train)}  Test samples: {len(X_test)}")
@@ -110,7 +134,7 @@ def main():
         n_estimators=200,
         max_depth=None,
         min_samples_leaf=2,
-        random_state=42,
+        random_state=RANDOM_STATE,
         n_jobs=-1,
         class_weight="balanced",
     )
@@ -156,13 +180,49 @@ def main():
     joblib.dump(model, model_path)
     joblib.dump({"encoders": encoders, "feature_columns": feature_cols}, encoder_path)
 
+    # Integrity of the exact file this model was fitted on, so a retrained or
+    # hand-edited dataset cannot be silently mistaken for the original.
+    dataset_rel = os.path.relpath(DATA_PATH, PROJECT_ROOT).replace("\\", "/")
+    with open(DATA_PATH, "rb") as fh:
+        dataset_sha256 = hashlib.sha256(fh.read()).hexdigest()
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
     metadata = {
+        "model_version": MODEL_VERSION,
+        "trained_at_utc": timestamp,
         "model_type": "RandomForestClassifier",
+        "library_versions": {
+            "scikit-learn": sklearn.__version__,
+            "numpy": np.__version__,
+            "pandas": pd.__version__,
+            "joblib": joblib.__version__,
+            "python": platform.python_version(),
+        },
+        "hyperparameters": {
+            "n_estimators": 200,
+            "max_depth": None,
+            "min_samples_leaf": 2,
+            "class_weight": "balanced",
+            "random_state": RANDOM_STATE,
+            "train_test_split": {
+                "test_size": 0.2,
+                "random_state": RANDOM_STATE,
+                "stratify": True,
+            },
+        },
         "trained_on": "DEMO/sample dataset (not production data)",
         # Store a path relative to the project root so the metadata never leaks
         # the absolute path or username of the machine that trained the model.
-        "dataset": os.path.relpath(DATA_PATH, PROJECT_ROOT).replace("\\", "/"),
+        "dataset": dataset_rel,
+        "dataset_sha256": dataset_sha256,
         "n_samples": int(len(df)),
+        "n_samples_train": int(len(X_train)),
+        "n_samples_test": int(len(X_test)),
+        "class_balance": {
+            "positive": int(y.sum()),
+            "negative": int(len(y) - y.sum()),
+        },
         "n_features": len(feature_cols),
         "accuracy": float(acc),
         "precision": float(prec),
@@ -172,7 +232,30 @@ def main():
         "feature_importance": {name: float(imp) for name, imp in feat_importance},
         "feature_columns": feature_cols,
         "calibration": calibration,
-        "risk_buckets": {"LOW": [0, 30], "MODERATE": [31, 60], "HIGH": [61, 80], "CRITICAL": [81, 100]},
+        # Mirrors app.risk.RISK_LEVELS so the served model and the backend
+        # classifier cannot drift apart. app.risk remains the single source of
+        # truth at runtime; this is a recorded snapshot of what was used.
+        "risk_thresholds": {
+            "score_range": [0, 100],
+            "upper_bounds": {level: bound for level, bound in RISK_LEVELS},
+        },
+        # Recorded honestly: in the generated DEMO dataset the label is a
+        # deterministic thresholded function of several of these features, so
+        # these metrics are inflated by construction and are NOT an estimate of
+        # real-world performance. The feature list below mirrors the
+        # `risk_input` expression in ml/data/generate_data.py exactly; do not
+        # add or drop a feature here without re-reading that code.
+        "label_leakage": {
+            "present_in_demo_data": True,
+            "note": (
+                "Label is derived from a thresholded linear score over "
+                "rainfall, rainfall_intensity, soil_moisture, slope, elevation, "
+                "historical_occurrence and distance_to_drain, plus uniform "
+                "noise. Temperature and humidity do not enter the score "
+                "directly. Reported metrics measure recovery of a synthetic "
+                "rule, not real-world landslide prediction accuracy."
+            ),
+        },
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)

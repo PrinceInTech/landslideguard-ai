@@ -14,9 +14,11 @@ __pycache__/
 .ruff_cache/
 
 # --- Runtime state (never baked into the image) ---
-*.db
-*.sqlite
-*.sqlite3
+# Recursive: SQLite files live next to their seed data (data/landslideguard.db),
+# and Docker's *.db only matches at the context root.
+**/*.db
+**/*.sqlite
+**/*.sqlite3
 *.log
 
 # --- Frontend (not used by the backend image) ---

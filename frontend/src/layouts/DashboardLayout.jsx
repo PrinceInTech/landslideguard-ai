@@ -10,9 +10,15 @@ export default function DashboardLayout() {
   const { isAuthed } = useAuth()
   const navigate = useNavigate()
 
+  // Replace instead of pushing so the back button cannot cycle through the
+  // protected pages after signing out.
   useEffect(() => {
-    if (!isAuthed) navigate('/login')
+    if (!isAuthed) navigate('/login', { replace: true })
   }, [isAuthed, navigate])
+
+  // Still mounting a protected page briefly would leak its layout, so render
+  // nothing until the session check passes.
+  if (!isAuthed) return null
 
   return (
     <div className="min-h-screen bg-slate-950">
@@ -34,8 +40,10 @@ export default function DashboardLayout() {
             </button>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="hidden items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 font-bold text-amber-400 sm:inline-flex">
-              DEMO MODE
+            {/* Per-panel DataSourceBadge reports the real source; this banner
+                would otherwise claim DEMO even when LIVE readings are in use. */}
+            <span className="hidden items-center gap-1.5 rounded-full bg-slate-800/70 px-3 py-1 font-bold text-slate-400 sm:inline-flex">
+              SYNTHETIC TRAINING DATA
             </span>
           </div>
         </header>

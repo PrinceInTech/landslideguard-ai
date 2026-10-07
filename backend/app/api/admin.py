@@ -15,8 +15,23 @@ from app.config import PROJECT_ROOT, settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-UPLOAD_DIR = settings.DATA_DIR
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# The dataset upload target lives under DATA_DIR; make sure it exists before
+# the first upload rather than relying on the repo shipping it.
+os.makedirs(settings.DATA_DIR, exist_ok=True)
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _row_count(content: bytes) -> int:
+    """Number of data rows (every line after the header) in a CSV body.
+
+    `content.count(b"\\n") - 1` under-reports when the file has no trailing
+    newline and returns -1 for a header-only body, so count lines explicitly.
+    """
+    if not content:
+        return 0
+    lines = content.count(b"\n") + (0 if content.endswith(b"\n") else 1)
+    return max(0, lines - 1)
 
 
 @router.get("/stats")
@@ -46,11 +61,40 @@ def admin_alerts(db: Session = Depends(get_db), _: object = Depends(get_current_
 async def upload_dataset(file: UploadFile = File(...), _: object = Depends(get_current_admin)):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV datasets are supported")
+
+    # Read in bounded chunks and abort as soon as the limit is exceeded, so a
+    # large upload cannot exhaust memory before the size check runs.
+    limit = settings.MAX_UPLOAD_BYTES
+    size = 0
+    chunks = []
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dataset exceeds the {limit // (1024 * 1024)} MB limit",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
     dest = settings.HISTORICAL_DATA
-    content = await file.read()
-    with open(dest, "wb") as f:
-        f.write(content)
-    return {"message": f"Dataset uploaded to {dest.name}", "rows": content.count(b"\n")}
+    # Write to a temporary file then swap, so a failure mid-write cannot leave a
+    # truncated dataset in place of the last known-good one.
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    try:
+        tmp.write_bytes(content)
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+    return {"message": f"Dataset uploaded to {dest.name}", "rows": _row_count(content)}
 
 
 @router.post("/retrain")

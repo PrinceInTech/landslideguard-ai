@@ -20,8 +20,33 @@ _BUCKET_MINUTES = 15
 
 class WeatherProvider:
     def __init__(self):
-        self.source = "DEMO"
         self.api_key = settings.OPENWEATHER_API_KEY
+        self.last_source = None
+        self.last_error = None
+
+    @property
+    def configured_source(self) -> str:
+        """Data source implied by configuration, regardless of runtime failures.
+
+        LIVE only when both the mode and a key are configured; otherwise DEMO.
+        """
+        if settings.DATA_MODE == "LIVE" and self.api_key:
+            return "LIVE"
+        return "DEMO"
+
+    @property
+    def source(self) -> str:
+        """Source of the most recently served reading.
+
+        Falls back to the configured source before any reading has been taken
+        (for example on a freshly started process).
+        """
+        return self.last_source or self.configured_source
+
+    @property
+    def degraded(self) -> bool:
+        """True when LIVE is configured but the last attempt fell back to DEMO."""
+        return self.configured_source == "LIVE" and self.last_source == "DEMO"
 
     def get_conditions(self, location) -> dict:
         """Return weather conditions for a location dict.
@@ -34,11 +59,23 @@ class WeatherProvider:
             try:
                 live = self._fetch_live(location)
                 if live is not None:
+                    self.last_source = "LIVE"
+                    self.last_error = None
                     return live
-            except Exception:
-                pass  # fall through to demo
+            except Exception as exc:
+                # Fall back to DEMO but keep the reason. `last_error` is
+                # diagnostic state only: no HTTP endpoint exposes it today
+                # (/api/health reports status, app, version, database, model,
+                # data_mode and time). The test suite asserts on it, and it is
+                # available to future admin tooling.
+                self.last_error = f"{type(exc).__name__}: {exc}"
+            demo = self._simulate(location)
+            demo["data_source"] = "DEMO"
+            self.last_source = "DEMO"
+            return demo
         demo = self._simulate(location)
         demo["data_source"] = "DEMO"
+        self.last_source = "DEMO"
         return demo
 
     def _fetch_live(self, location) -> dict | None:

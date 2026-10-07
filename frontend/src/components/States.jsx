@@ -27,6 +27,25 @@ export function ErrorState({ message, onRetry }) {
   )
 }
 
+/**
+ * Compact error for a single panel inside a page that otherwise rendered fine.
+ * Used where one failing endpoint must not blank out unrelated widgets.
+ */
+export function InlineError({ message, onRetry, label = 'unavailable' }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-red-900/40 bg-red-950/15 px-4 py-6 text-center">
+      <XCircle className="h-6 w-6 text-red-500" />
+      <p className="text-sm font-semibold text-red-300">{label}</p>
+      {message && <p className="text-xs text-slate-400">{message}</p>}
+      {onRetry && (
+        <button className="btn-outline mt-1 text-xs" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function EmptyState({ message = 'No data available' }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-500">

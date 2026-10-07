@@ -1,8 +1,36 @@
 {
+  "model_version": "1.1.0",
+  "trained_at_utc": "2026-10-05T17:49:07+00:00",
   "model_type": "RandomForestClassifier",
+  "library_versions": {
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "joblib": "1.6.0",
+    "python": "3.14.7"
+  },
+  "hyperparameters": {
+    "n_estimators": 200,
+    "max_depth": null,
+    "min_samples_leaf": 2,
+    "class_weight": "balanced",
+    "random_state": 42,
+    "train_test_split": {
+      "test_size": 0.2,
+      "random_state": 42,
+      "stratify": true
+    }
+  },
   "trained_on": "DEMO/sample dataset (not production data)",
   "dataset": "data/historical_landslide_data.csv",
+  "dataset_sha256": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
   "n_samples": 1470,
+  "n_samples_train": 1176,
+  "n_samples_test": 294,
+  "class_balance": {
+    "positive": 990,
+    "negative": 480
+  },
   "n_features": 12,
   "accuracy": 0.8231292517006803,
   "precision": 0.8842105263157894,
@@ -50,22 +78,20 @@
     "min_prob": 0.0,
     "max_prob": 1.0
   },
-  "risk_buckets": {
-    "LOW": [
+  "risk_thresholds": {
+    "score_range": [
       0,
-      30
-    ],
-    "MODERATE": [
-      31,
-      60
-    ],
-    "HIGH": [
-      61,
-      80
-    ],
-    "CRITICAL": [
-      81,
       100
-    ]
+    ],
+    "upper_bounds": {
+      "LOW": 30.0,
+      "MODERATE": 60.0,
+      "HIGH": 80.0,
+      "CRITICAL": 100.0
+    }
+  },
+  "label_leakage": {
+    "present_in_demo_data": true,
+    "note": "Label is derived from a thresholded linear score over rainfall, rainfall_intensity, soil_moisture, slope, elevation, historical_occurrence and distance_to_drain, plus uniform noise. Temperature and humidity do not enter the score directly. Reported metrics measure recovery of a synthetic rule, not real-world landslide prediction accuracy."
   }
 }

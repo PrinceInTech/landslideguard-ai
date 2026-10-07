@@ -129,6 +129,32 @@ cd ..
 The trained model is committed to the repo, so nothing needs to be generated
 before first run.
 
+### Dependencies
+
+- **Runtime:** [`backend/requirements.txt`](backend/requirements.txt) — what the
+  application needs to serve requests. Install this everywhere, including
+  deployment.
+- **Test:** [`backend/requirements-dev.txt`](backend/requirements-dev.txt) —
+  `pytest` and `httpx`, used only by the test suite. Install it in development
+  and CI, not in production:
+
+  ```bash
+  pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+  ```
+
+### Running the tests
+
+Tests are run with **pytest**, from `backend/`:
+
+```bash
+cd backend
+pytest -q
+```
+
+The suite creates its own throwaway SQLite database under the system temp
+directory and removes it when the run finishes; it never touches the developer's
+`backend/landslideguard.db` or the Docker runtime `data/landslideguard.db`.
+
 ## Environment Variables
 
 All variables are optional — with no `.env` the app boots on safe local

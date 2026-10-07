@@ -30,6 +30,17 @@ COPY backend/app ./app
 COPY ml ./ml
 COPY data ./data
 
+# Run as an unprivileged user. /app is chowned because the retrain endpoint
+# writes model artifacts and the dataset upload writes into data/.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+
+# Entrypoint chowns the writable mounts and then drops privileges via setpriv,
+# so the server itself never runs as root. See docker-entrypoint.sh.
+COPY backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
 # Defaults; overridden by docker-compose / real environment variables.
 ENV DATA_MODE=DEMO \
     DATABASE_URL=sqlite:////app/data/landslideguard.db \
@@ -43,3 +54,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# The app needs /app/data and /app/ml/model to be writable, so it cannot be a
+# fully read-only container. It still drops to a non-root user at startup.

@@ -44,6 +44,25 @@ def _load_env():
 
 _load_env()
 
+
+def _upload_limit_bytes() -> int:
+    """Parse MAX_UPLOAD_MB into bytes, failing loudly rather than silently.
+
+    A malformed value must not be coerced to 0 (which would reject every
+    upload) or fall back to a default the operator did not intend; the message
+    is raised at import time so the mistake is visible on first boot.
+    """
+    raw = os.getenv("MAX_UPLOAD_MB", "50")
+    try:
+        megabytes = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"MAX_UPLOAD_MB must be a whole number of megabytes, got {raw!r}"
+        ) from exc
+    if megabytes <= 0:
+        raise ValueError(f"MAX_UPLOAD_MB must be greater than 0, got {megabytes}")
+    return megabytes * 1024 * 1024
+
 # A hardcoded fallback signing key means anybody who reads the repo can forge
 # admin tokens. Outside development we require an explicitly configured secret.
 _INSECURE_JWT_SECRET = "change-me-landslideguard-demo-secret"
@@ -108,6 +127,10 @@ class Settings:
     )
     # Training pipeline, invoked by the admin retrain endpoint.
     TRAIN_SCRIPT = Path(os.getenv("TRAIN_SCRIPT") or (PROJECT_ROOT / "ml" / "train.py"))
+
+    # Cap on dataset uploads so an oversized file is rejected instead of being
+    # buffered entirely in memory. nginx enforces the same limit.
+    MAX_UPLOAD_BYTES = _upload_limit_bytes()
 
     # CORS. "*" is rejected by the browser when credentials are used, so
     # production must list explicit origins.

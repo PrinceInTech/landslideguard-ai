@@ -4,6 +4,7 @@ import pandas as pd
 from app.config import settings
 from app.database.session import SessionLocal
 from app.models import Location
+from app.risk import classify_risk
 
 STATES = [
     "Arunachal Pradesh", "Assam", "Manipur", "Meghalaya",
@@ -72,22 +73,12 @@ def state_risk_summary():
         summary.append({
             "state": state,
             "avg_risk_score": round(avg_score, 1),
-            "risk_level": _bucket_avg(avg_score),
+            "risk_level": classify_risk(avg_score),
             "locations": len(state_locs),
             "highest_risk_location": max_loc.name if max_loc else None,
             "highest_risk_score": round(max_loc.risk_score, 1) if max_loc else 0,
         })
     return summary
-
-
-def _bucket_avg(score):
-    if score <= 30:
-        return "LOW"
-    if score <= 60:
-        return "MODERATE"
-    if score <= 80:
-        return "HIGH"
-    return "CRITICAL"
 
 
 def risk_distribution():

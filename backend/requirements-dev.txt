@@ -1,0 +1,9 @@
+# Development-only dependencies. Not installed by the Docker image and not part
+# of requirements.txt (the deployed app needs neither).
+#
+#   python -m pip install -r requirements-dev.txt   # from backend/
+#   python -m pytest                                # from backend/ (see pytest.ini)
+#
+# httpx is required by fastapi.testclient.TestClient.
+pytest==9.1.1
+httpx==0.28.1
