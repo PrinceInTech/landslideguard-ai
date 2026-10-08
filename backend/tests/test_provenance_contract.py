@@ -42,6 +42,8 @@ def _real_record(**overrides) -> RecordProvenance:
     values = {
         "event_id": "evt-0001",
         "prediction_cutoff_utc": datetime(2026, 10, 8, 3, 30, tzinfo=UTC),
+        "observation_time_utc": None,
+        "available_utc": datetime(2026, 10, 8, 3, 0, tzinfo=UTC),
         "latitude": 25.67,
         "longitude": 94.11,
         "coordinate_precision": 0.01,
@@ -50,6 +52,7 @@ def _real_record(**overrides) -> RecordProvenance:
         "feature_source": "ECMWF-ERA5",
         "feature_source_version": "5",
         "data_quality": DataQualityFlags(note="test fixture"),
+        "kind": "REAL",
     }
     values.update(overrides)
     return RecordProvenance(**values)
@@ -102,6 +105,91 @@ def test_record_rejects_naive_cutoff_datetime():
 def test_record_accepts_utc_cutoff_datetime():
     record = _real_record(prediction_cutoff_utc=datetime(2026, 10, 8, 3, 30, tzinfo=UTC))
     assert record.prediction_cutoff_utc.tzinfo is not None
+
+
+# ---------- Required kind ----------
+
+
+def test_record_rejects_missing_kind():
+    data = _real_record().model_dump()
+    del data["kind"]
+    with pytest.raises(ValidationError):
+        RecordProvenance(**data)
+
+
+def test_record_accepts_demo_kind():
+    record = _real_record(kind="DEMO")
+    assert record.kind == "DEMO"
+
+
+def test_record_accepts_real_kind():
+    record = _real_record(kind="REAL")
+    assert record.kind == "REAL"
+
+
+def test_record_rejects_invalid_kind():
+    with pytest.raises(ValidationError):
+        _real_record(kind="PROD")
+
+
+# ---------- Temporal availability gate (Phase 3.1) ----------
+
+
+def test_record_rejects_naive_observation_time():
+    with pytest.raises(ValidationError):
+        _real_record(observation_time_utc=datetime(2026, 10, 8, 3, 0))
+
+
+def test_record_rejects_naive_available_utc():
+    with pytest.raises(ValidationError):
+        _real_record(available_utc=datetime(2026, 10, 8, 3, 0))
+
+
+def test_record_rejects_available_after_cutoff():
+    cutoff = datetime(2026, 10, 8, 10, 0, tzinfo=UTC)
+    with pytest.raises(ValidationError):
+        _real_record(
+            prediction_cutoff_utc=cutoff,
+            available_utc=datetime(2026, 10, 8, 13, 0, tzinfo=UTC),
+        )
+
+
+def test_record_rejects_observation_after_cutoff():
+    cutoff = datetime(2026, 10, 8, 10, 0, tzinfo=UTC)
+    with pytest.raises(ValidationError):
+        _real_record(
+            prediction_cutoff_utc=cutoff,
+            observation_time_utc=datetime(2026, 10, 8, 11, 0, tzinfo=UTC),
+            available_utc=datetime(2026, 10, 8, 9, 0, tzinfo=UTC),
+        )
+
+
+def test_record_accepts_valid_timestamps():
+    cutoff = datetime(2026, 10, 8, 10, 0, tzinfo=UTC)
+    record = _real_record(
+        prediction_cutoff_utc=cutoff,
+        observation_time_utc=datetime(2026, 10, 8, 9, 0, tzinfo=UTC),
+        available_utc=datetime(2026, 10, 8, 9, 30, tzinfo=UTC),
+    )
+    assert record.observation_time_utc.tzinfo is not None
+    assert record.available_utc.tzinfo is not None
+    assert record.available_utc <= record.prediction_cutoff_utc
+
+
+def test_record_accepts_available_equal_to_cutoff():
+    cutoff = datetime(2026, 10, 8, 10, 0, tzinfo=UTC)
+    record = _real_record(prediction_cutoff_utc=cutoff, available_utc=cutoff)
+    assert record.available_utc == record.prediction_cutoff_utc
+
+
+def test_section4_example_record_must_be_rejected():
+    """Docs example: obs 09:00Z, available 13:00Z, cutoff 10:00Z -> ineligible."""
+    with pytest.raises(ValidationError):
+        _real_record(
+            prediction_cutoff_utc=datetime(2026, 10, 8, 10, 0, tzinfo=UTC),
+            observation_time_utc=datetime(2026, 10, 8, 9, 0, tzinfo=UTC),
+            available_utc=datetime(2026, 10, 8, 13, 0, tzinfo=UTC),
+        )
 
 
 @pytest.mark.parametrize("precision", [0.0, -0.1, 361.0])
@@ -169,7 +257,7 @@ def test_manifest_file_exists_and_parses():
     assert MANIFEST_PATH.exists(), "data/provenance/manifest.json must be committed"
     manifest = load_manifest(MANIFEST_PATH)
     assert isinstance(manifest, ProvenanceManifest)
-    assert manifest.contract_version == "1.0.0"
+    assert manifest.contract_version == "1.1.0"
     assert manifest.artifacts, "manifest must register the committed artifacts"
     assert manifest.generated_at_utc.tzinfo is not None
 

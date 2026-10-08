@@ -1,4 +1,4 @@
-"""Provenance and data-contract schemas (Phase 2.2 foundation).
+"""Provenance and data-contract schemas (Phase 2.2 foundation, Phase 3.1 update).
 
 This module defines the typed contract that every future REAL-data
 prediction/training record must satisfy, plus source-level provenance and the
@@ -14,10 +14,26 @@ DEMO vs REAL
 ------------
 `PROVENANCE_KINDS` (`DEMO`, `REAL`) separates the two worlds explicitly. The
 current DEMO pipeline never emits these fields, so no existing record is
-affected. A record that carries `RecordProvenance` is a REAL-data candidate by
-construction; the coupling between a record and its source
-(`record.kind == source.kind`) is enforced by
+affected. A record that carries `RecordProvenance` must declare its `kind`
+explicitly (there is no default): `REAL` marks a real-data candidate, `DEMO`
+marks a provenance-bearing demo record. The coupling between a record and its
+source (`record.kind == source.kind`) is enforced by
 `app.services.provenance.validate_record_source_match`.
+
+Temporal semantics (Phase 3.1)
+------------------------------
+Every record tracks four distinct instants so historical replay can never
+silently leak future information:
+
+* `observation_time_utc` - when the underlying measurement is valid for;
+* `available_utc`        - when the exact product vintage used became public;
+* `prediction_cutoff_utc`- when the model inputs were frozen (model time);
+* `SourceProvenance.retrieved_utc` - when WE downloaded/retrieved the data.
+
+The schema rejects a record whose `available_utc` (or `observation_time_utc`,
+when present) is after `prediction_cutoff_utc`: a feature that was not yet
+published at model time is not eligible for that cutoff. All datetimes are
+timezone-aware; naive inputs are rejected, never silently converted.
 
 Coordinate conventions: WGS84 decimal degrees. `coordinate_precision` is the
 half-width of the grid cell / reported coordinate in degrees (e.g. 0.01 degrees
@@ -26,7 +42,7 @@ reading really is rather than implying exact coordinates.
 """
 from datetime import date, datetime, timezone
 
-from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 # Canonical provenance kinds. Record.schemas validate against this pair; the
 # DEMO baseline is untouched and any record carrying provenance is a REAL-data
@@ -38,6 +54,8 @@ PROVENANCE_KINDS = ("DEMO", "REAL")
 RECORD_PROVENANCE_FIELDS = (
     "event_id",
     "prediction_cutoff_utc",
+    "observation_time_utc",
+    "available_utc",
     "latitude",
     "longitude",
     "coordinate_precision",
@@ -82,14 +100,24 @@ class DataQualityFlags(BaseModel):
 class RecordProvenance(BaseModel):
     """Provenance attached to one prediction or training record.
 
-    Belongs to the REAL-data track by default: any record that carries
-    per-record provenance is a candidate for real training/prediction. DEMO
-    records today do not emit these fields, so nothing existing is affected.
+    `kind` is required and explicit (no default): a record must declare whether
+    it belongs to the DEMO or REAL track. The temporal fields implement the
+    Phase 3.1 leakage gate -- nothing may be observed or published after the
+    prediction cutoff.
     """
 
     event_id: str = Field(min_length=1, max_length=200)
     prediction_cutoff_utc: AwareDatetime = Field(
         description="UTC instant the model inputs were cut off (timezone-aware)."
+    )
+    observation_time_utc: AwareDatetime | None = Field(
+        default=None,
+        description="UTC instant the underlying measurement is valid for (timezone-aware); "
+        "None when the feature has no observation instant (e.g. a static terrain map).",
+    )
+    available_utc: AwareDatetime = Field(
+        description="UTC instant the exact product vintage used became publicly "
+        "available (timezone-aware). Must be <= prediction_cutoff_utc.",
     )
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
@@ -103,7 +131,24 @@ class RecordProvenance(BaseModel):
     feature_source: str = Field(min_length=1, max_length=200)
     feature_source_version: str = Field(min_length=1, max_length=100)
     data_quality: DataQualityFlags = Field(default_factory=DataQualityFlags)
-    kind: str = Field(default="REAL", pattern="^(DEMO|REAL)$")
+    kind: str = Field(pattern="^(DEMO|REAL)$")
+
+    @model_validator(mode="after")
+    def _enforce_temporal_availability_gate(self) -> "RecordProvenance":
+        if self.available_utc is not None and self.available_utc > self.prediction_cutoff_utc:
+            raise ValueError(
+                "available_utc must not be after prediction_cutoff_utc: the product "
+                "vintage was not yet published at the prediction cutoff"
+            )
+        if (
+            self.observation_time_utc is not None
+            and self.observation_time_utc > self.prediction_cutoff_utc
+        ):
+            raise ValueError(
+                "observation_time_utc must not be after prediction_cutoff_utc: the "
+                "observation is future relative to the prediction cutoff"
+            )
+        return self
 
 
 class GeographicCoverage(BaseModel):
@@ -209,7 +254,7 @@ class ProvenanceManifest(BaseModel):
     registered.
     """
 
-    contract_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
+    contract_version: str = Field(default="1.1.0", pattern=r"^\d+\.\d+\.\d+$")
     generated_at_utc: AwareDatetime = Field(
         description="When this manifest file was generated (timezone-aware)."
     )
