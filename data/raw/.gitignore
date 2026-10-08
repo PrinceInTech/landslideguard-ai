@@ -1,0 +1,9 @@
+# Raw REAL-world datasets referenced by data/provenance/manifest.json are
+# never committed to the repository. This directory holds them (and only them)
+# on a working machine; the manifest records each file's SHA-256 so a later
+# verification step can confirm an uncommitted file matches what was registered.
+#
+# Only this .gitignore and README.md may be tracked.
+*
+!.gitignore
+!README.md

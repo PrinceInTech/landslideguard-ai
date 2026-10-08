@@ -97,6 +97,13 @@ python ml/data/generate_data.py
 ```
 In production, replace these files with real observations (see Future Scope).
 
+> **Data contract & provenance (Phase 2.2):** see
+> **[docs/provenance.md](docs/provenance.md)** for the typed contract that will
+> govern future REAL data — per-record provenance, source-level provenance, and
+> the committed manifest at `data/provenance/manifest.json`, which registers
+> DEMO artifacts by SHA-256 and will reference raw REAL files by checksum only
+> (raw files are git-ignored under `data/raw/`).
+
 ## Tech Stack
 
 - **Frontend:** React · Vite · Tailwind CSS · React Router · Recharts · Leaflet/react-leaflet · Lucide

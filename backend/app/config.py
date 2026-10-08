@@ -128,6 +128,14 @@ class Settings:
     # Training pipeline, invoked by the admin retrain endpoint.
     TRAIN_SCRIPT = Path(os.getenv("TRAIN_SCRIPT") or (PROJECT_ROOT / "ml" / "train.py"))
 
+    # Provenance (Phase 2.2). The manifest is committed; raw REAL source files
+    # land in RAW_DATA_DIR, which is git-ignored, and are referenced from the
+    # manifest only by checksum so large datasets never enter Git.
+    PROVENANCE_MANIFEST = Path(
+        os.getenv("PROVENANCE_MANIFEST") or (PROJECT_ROOT / "data" / "provenance" / "manifest.json")
+    )
+    RAW_DATA_DIR = Path(os.getenv("RAW_DATA_DIR") or (PROJECT_ROOT / "data" / "raw"))
+
     # Cap on dataset uploads so an oversized file is rejected instead of being
     # buffered entirely in memory. nginx enforces the same limit.
     MAX_UPLOAD_BYTES = _upload_limit_bytes()

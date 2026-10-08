@@ -1,0 +1,145 @@
+{
+  "contract_version": "1.0.0",
+  "generated_at_utc": "2026-10-08T04:51:16Z",
+  "artifacts": [
+    {
+      "name": "demo-training-data",
+      "path": "data/historical_landslide_data.csv",
+      "role": "training-data",
+      "sha256": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
+      "size_bytes": 223559,
+      "description": "DEMO synthetic training dataset (1,470 rows, 30 locations, 8 NER states). Canonical input, pinned by ml/model/model_meta.json dataset_sha256."
+    },
+    {
+      "name": "demo-model",
+      "path": "ml/model/landslide_model.joblib",
+      "role": "model",
+      "sha256": "ad7cc76a93a955488dcce00e14f1b1c167dffbd91aff7cdb11a44a00585123eb",
+      "size_bytes": 3568969,
+      "description": "Trained RandomForestClassifier (DEMO). Loaded at runtime by backend/app/ml/predictor.py."
+    },
+    {
+      "name": "demo-preprocessors",
+      "path": "ml/model/preprocessors.joblib",
+      "role": "model-metadata",
+      "sha256": "083db7ce07de1cab64fca176af98b766df4013b9562a5b3a3165f2567c564900",
+      "size_bytes": 1352,
+      "description": "Label encoders + feature-column list used to fit the DEMO model."
+    },
+    {
+      "name": "demo-model-meta",
+      "path": "ml/model/model_meta.json",
+      "role": "model-metadata",
+      "sha256": "fe7532036af886c0deb96d4687eca41176d160e72228a4b21d583eb4f4689e46",
+      "size_bytes": 2689,
+      "description": "Model metadata: version, libraries, hyperparameters, metrics, feature importances, label-leakage caveat."
+    },
+    {
+      "name": "demo-locations",
+      "path": "data/monitoring_locations.csv",
+      "role": "locations",
+      "sha256": "5c058de0bb0ee833a8ad0f49f9b13a61a9520bb63f28c3608659813349b87f4b",
+      "size_bytes": 1655,
+      "description": "30 seeding locations across the 8 NER states used by the DEMO generator."
+    }
+  ],
+  "sources": [
+    {
+      "name": "landslideguard-demo-generator",
+      "kind": "DEMO",
+      "access_reference": "In-repo generator: ml/data/generate_data.py (run as `python ml/data/generate_data.py` from the project root)",
+      "license_attribution": "None - generated in-repo, no third-party content (the repository has no LICENSE file)",
+      "retrieved_utc": null,
+      "checksum_algorithm": "sha256",
+      "source_checksum": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
+      "file_size_bytes": 223559,
+      "geographic_coverage": {
+        "min_latitude": 22.882,
+        "max_latitude": 27.999,
+        "min_longitude": 88.2238,
+        "max_longitude": 95.04
+      },
+      "temporal_coverage": {
+        "start": "2018-01-01",
+        "end": "2025-11-20"
+      },
+      "field_mapping": [
+        {
+          "source_column": "rainfall",
+          "contract_field": "rainfall",
+          "transform": "pass-through (column name already matches the model contract)"
+        },
+        {
+          "source_column": "rainfall_intensity",
+          "contract_field": "rainfall_intensity",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "soil_moisture",
+          "contract_field": "soil_moisture",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "temperature",
+          "contract_field": "temperature",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "humidity",
+          "contract_field": "humidity",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "elevation",
+          "contract_field": "elevation",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "slope",
+          "contract_field": "slope",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "historical_occurrence",
+          "contract_field": "historical_occurrence",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "distance_to_drain",
+          "contract_field": "distance_to_drain",
+          "transform": "pass-through"
+        },
+        {
+          "source_column": "land_cover",
+          "contract_field": "land_cover",
+          "transform": "label-encoded at training time"
+        },
+        {
+          "source_column": "soil_type",
+          "contract_field": "soil_type",
+          "transform": "label-encoded at training time"
+        },
+        {
+          "source_column": "rock_type",
+          "contract_field": "rock_type",
+          "transform": "label-encoded at training time"
+        },
+        {
+          "source_column": "landslide",
+          "contract_field": "target (landslide label)",
+          "transform": "0/1 label for binary classification"
+        }
+      ],
+      "known_limitations": [
+        "DEMO/synthetic: the label is a thresholded linear function of several of these features (label leakage), so the reported metrics are not an estimate of real-world performance (see docs/model.md).",
+        "Regeneration is seeded (random.seed(42)) and reproducible for a given Python runtime, but is not guaranteed byte-identical across Python versions; the committed CSV plus its SHA-256 is canonical.",
+        "Coordinates are representative town centroids, not verified landslide points."
+      ]
+    }
+  ],
+  "notes": [
+    "REAL sources are registered in this manifest by checksum only; their raw bytes live in data/raw, which is git-ignored, so large datasets never enter the repository.",
+    "No REAL source is registered yet. This manifest records the DEMO baseline only; the data acquisition phase will add REAL sources here before any real training or prediction.",
+    "Contract schema: backend/app/schemas/provenance.py. Loader/verifier: backend/app/services/provenance.py."
+  ]
+}

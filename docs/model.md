@@ -41,6 +41,19 @@ the positive class, which is why the model is trained with
    - `ml/model/model_meta.json` (metrics + feature importances)
 3. `ml/evaluate.py` — re-evaluates the saved model and prints metrics.
 
+### Reproducibility
+
+The committed `data/historical_landslide_data.csv` is the **canonical training
+input**; `ml/train.py` pins its SHA-256 into `model_meta.json`, and the suite
+fails if the file drifts. `ml/data/generate_data.py` seeds its RNG
+(`random.seed(42)`), so regeneration is reproducible for the same Python
+runtime, but is not guaranteed byte-identical across Python versions. After any
+regeneration, re-run `ml/train.py` so `dataset_sha256` tracks the new file —
+the model and its metrics are only valid for the exact dataset recorded in
+`model_meta.json`. This limitation applies to the DEMO dataset only; real data
+will be pinned by checksums in the provenance contract
+(`docs/provenance.md`).
+
 ## Algorithm
 
 Random Forest Classifier (`n_estimators=200`, `class_weight="balanced"`).

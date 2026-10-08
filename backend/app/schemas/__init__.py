@@ -6,6 +6,19 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.risk import classify_risk
 
+# Provenance / data-contract schemas (Phase 2.2). Re-exported here so the whole
+# contract is discoverable from the schemas package like every other schema.
+from app.schemas.provenance import (  # noqa: F401,E402
+    DataQualityFlags,
+    FieldMapping,
+    GeographicCoverage,
+    ManifestArtifact,
+    ProvenanceManifest,
+    RecordProvenance,
+    SourceProvenance,
+    TemporalCoverage,
+)
+
 # Re-exported for backwards compatibility: callers previously imported the
 # risk helper from this module. Canonical definition lives in app.risk.
 # (Deliberately no `__all__`: this module exports the request/response models
