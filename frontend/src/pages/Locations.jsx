@@ -10,14 +10,17 @@ const EMPTY_FORM = { name: '', state: 'Assam', district: '', latitude: '', longi
 export default function Locations() {
   const [locations, setLocations] = useState([])
   const [loading, setLoading] = useState(true)
+  // Load failure vs save/delete failure: a rejected mutation must never wipe
+  // the table that is still perfectly valid.
   const [error, setError] = useState(null)
+  const [actionError, setActionError] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const res = await api.get('/api/locations')
@@ -25,7 +28,7 @@ export default function Locations() {
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -46,7 +49,7 @@ export default function Locations() {
   const save = async (e) => {
     e.preventDefault()
     setSaving(true)
-    setError(null)
+    setActionError(null)
     try {
       if (editing) {
         await api.put(`/api/locations/${editing.id}`, form)
@@ -54,9 +57,9 @@ export default function Locations() {
         await api.post('/api/locations', form)
       }
       setShowForm(false)
-      load()
+      await load({ silent: true })
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Could not save location')
+      setActionError(err?.response?.data?.detail || 'Could not save location')
     } finally {
       setSaving(false)
     }
@@ -64,11 +67,12 @@ export default function Locations() {
 
   const remove = async (loc) => {
     if (!window.confirm(`Delete ${loc.name}?`)) return
+    setActionError(null)
     try {
       await api.delete(`/api/locations/${loc.id}`)
-      load()
+      await load({ silent: true })
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Could not delete')
+      setActionError(e?.response?.data?.detail || 'Could not delete this location')
     }
   }
 
@@ -86,11 +90,23 @@ export default function Locations() {
         </button>
       </div>
 
+      {actionError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-2.5 text-sm text-red-300"
+        >
+          <span>{actionError}</span>
+          <button type="button" className="btn-outline !py-1 text-xs" onClick={() => setActionError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {showForm && (
         <form onSubmit={save} className="card border-brand/30">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="font-bold">{editing ? `Edit ${editing.name}` : 'Add Monitoring Location'}</h3>
-            <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-200"><X className="h-5 w-5" /></button>
+            <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close form"><X className="h-5 w-5" /></button>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
@@ -133,19 +149,32 @@ export default function Locations() {
       )}
 
       <PageState loading={loading} error={error} onRetry={load}>
+        {locations.length === 0 ? (
+          <div className="card flex flex-col items-center gap-3 py-16 text-center">
+            <MapPin className="h-10 w-10 text-slate-600" aria-hidden="true" />
+            <p className="font-bold text-slate-200">No monitoring locations yet</p>
+            <p className="max-w-sm text-sm text-slate-400">
+              Add a site to start tracking landslide risk on the map, dashboard and alerts.
+            </p>
+            <button className="btn-primary" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add your first location
+            </button>
+          </div>
+        ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[720px] text-left text-sm">
+            <caption className="sr-only">Monitored locations with coordinates, terrain and current risk</caption>
             <thead className="bg-surface text-[11px] uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-4 py-3">Location</th>
-                <th className="px-4 py-3">State</th>
-                <th className="px-4 py-3">Lat</th>
-                <th className="px-4 py-3">Lon</th>
-                <th className="px-4 py-3">Slope</th>
-                <th className="px-4 py-3">Elevation</th>
-                <th className="px-4 py-3">Risk</th>
-                <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th scope="col" className="px-4 py-3">Location</th>
+                <th scope="col" className="px-4 py-3">State</th>
+                <th scope="col" className="px-4 py-3">Lat</th>
+                <th scope="col" className="px-4 py-3">Lon</th>
+                <th scope="col" className="px-4 py-3">Slope</th>
+                <th scope="col" className="px-4 py-3">Elevation</th>
+                <th scope="col" className="px-4 py-3">Risk</th>
+                <th scope="col" className="px-4 py-3">Updated</th>
+                <th scope="col" className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70 bg-surface/40">
@@ -166,11 +195,21 @@ export default function Locations() {
                   <td className="px-4 py-3 text-xs text-slate-500">{formatTs(l.last_updated)}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-amber-400" title="Edit" onClick={() => openEdit(l)}>
-                        <Pencil className="h-4 w-4" />
+                      <button
+                        className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-amber-400"
+                        title="Edit"
+                        aria-label={`Edit ${l.name}`}
+                        onClick={() => openEdit(l)}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
                       </button>
-                      <button className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-red-400" title="Delete" onClick={() => remove(l)}>
-                        <Trash2 className="h-4 w-4" />
+                      <button
+                        className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-red-400"
+                        title="Delete"
+                        aria-label={`Delete ${l.name}`}
+                        onClick={() => remove(l)}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
                   </td>
@@ -179,6 +218,7 @@ export default function Locations() {
             </tbody>
           </table>
         </div>
+        )}
       </PageState>
     </div>
   )

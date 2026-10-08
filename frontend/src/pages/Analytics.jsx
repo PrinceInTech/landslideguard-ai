@@ -46,6 +46,10 @@ export default function Analytics() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="card">
             <h3 className="mb-4 font-bold">Monthly Landslide Incidents</h3>
+            <div
+              role="img"
+              aria-label={`Bar chart of monthly landslide incidents across ${monthly.length} months`}
+            >
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={monthly}>
                 <CartesianGrid strokeDasharray="3 3" {...GRID_STYLE} />
@@ -55,10 +59,15 @@ export default function Analytics() {
                 <Bar dataKey="incidents" name="Incidents" fill="#f59e0b" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
 
           <div className="card">
             <h3 className="mb-4 font-bold">Avg Rainfall vs Incidents</h3>
+            <div
+              role="img"
+              aria-label={`Line chart comparing average rainfall and landslide incidents across ${monthly.length} months`}
+            >
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={monthly}>
                 <CartesianGrid strokeDasharray="3 3" {...GRID_STYLE} />
@@ -70,6 +79,7 @@ export default function Analytics() {
                 <Line type="monotone" dataKey="incidents" name="Incidents" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} />
               </LineChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
@@ -77,6 +87,12 @@ export default function Analytics() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="card">
             <h3 className="mb-4 font-bold">Current Risk Distribution</h3>
+            <div
+              role="img"
+              aria-label={`Pie chart of monitored locations by risk level: ${
+                riskDist.map((d) => `${d.level} ${d.count}`).join(', ') || 'no data'
+              }`}
+            >
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={riskDist} dataKey="count" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={3} label>
@@ -86,6 +102,7 @@ export default function Analytics() {
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
+            </div>
           </div>
 
           <div className="card">

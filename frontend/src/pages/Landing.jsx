@@ -60,7 +60,7 @@ const FEATURES = [
   {
     icon: BarChart3,
     title: 'Historical Analytics',
-    desc: 'Monthly trends, rainfall correlation and state-wise incident analytics from real data pipelines.',
+    desc: 'Monthly trends, rainfall correlation and state-wise incident analytics from the historical incident dataset.',
   },
   {
     icon: Satellite,
@@ -80,7 +80,7 @@ const STACK = [
   { icon: Layers, label: 'React + Vite' },
   { icon: MapIcon, label: 'Leaflet GIS' },
   { icon: BarChart3, label: 'Recharts' },
-  { icon: Database, label: 'SQLite / MongoDB' },
+  { icon: Database, label: 'SQLite' },
   { icon: Wind, label: 'OpenWeatherMap' },
   { icon: Activity, label: 'Pandas / NumPy' },
 ]

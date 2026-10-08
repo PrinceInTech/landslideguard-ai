@@ -15,8 +15,8 @@ export default function Admin() {
   const [notice, setNotice] = useState(null)
   const [file, setFile] = useState(null)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const [s, a, cfg] = await Promise.all([api.get('/api/admin/stats'), api.get('/api/admin/alerts'), api.get('/api/admin/settings')])
@@ -30,7 +30,7 @@ export default function Admin() {
         setError(e?.response?.data?.detail || e.message)
       }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -44,7 +44,7 @@ export default function Admin() {
       if (action === 'retrain') res = await api.post('/api/admin/retrain')
       if (action === 'trigger') res = await api.post('/api/admin/trigger-predict')
       setNotice({ type: 'ok', text: res?.data?.message || 'Done' })
-      load()
+      load({ silent: true })
     } catch (e) {
       setNotice({ type: 'err', text: e?.response?.data?.detail || 'Action failed' })
     } finally {
@@ -61,6 +61,7 @@ export default function Admin() {
     try {
       const res = await api.post('/api/admin/upload-dataset', fd)
       setNotice({ type: 'ok', text: res?.data?.message || 'Dataset uploaded' })
+      load({ silent: true })
     } catch (e) {
       setNotice({ type: 'err', text: e?.response?.data?.detail || 'Upload failed' })
     } finally {

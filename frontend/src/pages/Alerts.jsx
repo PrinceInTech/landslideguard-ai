@@ -11,15 +11,18 @@ const STATUSES = ['', 'active', 'acknowledged', 'resolved']
 export default function Alerts() {
   const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
+  // Load failure = the list cannot be shown (PageState). Action failure = the
+  // mutation did not apply, the list is still valid, so it must not replace it.
   const [error, setError] = useState(null)
+  const [actionError, setActionError] = useState(null)
   const [state, setState] = useState('')
   const [level, setLevel] = useState('')
   const [status, setStatus] = useState('')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState(null)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams()
@@ -32,7 +35,7 @@ export default function Alerts() {
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -43,11 +46,13 @@ export default function Alerts() {
   }, [state, level, status, search])
 
   const updateStatus = async (id, newStatus) => {
+    setActionError(null)
     try {
       await api.put(`/api/alerts/${id}`, { status: newStatus })
-      load()
+      // Refresh the table without bouncing the whole page back to a skeleton.
+      await load({ silent: true })
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setActionError(e?.response?.data?.detail || 'Could not update this alert')
     }
   }
 
@@ -72,6 +77,18 @@ export default function Alerts() {
           </span>
         </div>
       </div>
+
+      {actionError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-2.5 text-sm text-red-300"
+        >
+          <span>{actionError} — the list below is unchanged.</span>
+          <button type="button" className="btn-outline !py-1 text-xs" onClick={() => setActionError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

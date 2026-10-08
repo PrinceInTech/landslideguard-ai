@@ -1,13 +1,15 @@
 import React from 'react'
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
 
-export function StatCard({ title, value, sub, icon: Icon, trend, trendUp, color = 'text-slate-100' }) {
+export function StatCard({ title, value, sub, icon: Icon, trend, trendUp, color = 'text-slate-100', hint }) {
   return (
     <div className="card">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</p>
-          <p className={`mt-2 text-2xl font-bold ${color}`}>{value}</p>
+          <p className={`mt-2 text-2xl font-bold ${color}`} title={hint}>
+            {value}
+          </p>
           {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
         </div>
         {Icon && (

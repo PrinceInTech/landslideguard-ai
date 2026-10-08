@@ -16,27 +16,47 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
-const NAV = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/map', label: 'Risk Map', icon: MapIcon },
-  { to: '/prediction', label: 'Prediction', icon: BrainCircuit },
-  { to: '/alerts', label: 'Alerts', icon: Bell },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { to: '/locations', label: 'Locations', icon: MapPin },
-  { to: '/ai-insights', label: 'AI Insights', icon: Sparkles },
-  // Admin-only: hidden from viewers, who would only get 403 from the API.
-  { to: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
-  { to: '/settings', label: 'Settings', icon: Settings },
+// Grouped by what the user is trying to do, not by route order.
+const NAV_GROUPS = [
+  {
+    label: 'Monitor',
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/map', label: 'Risk Map', icon: MapIcon },
+      { to: '/alerts', label: 'Alerts', icon: Bell },
+    ],
+  },
+  {
+    label: 'Intelligence',
+    items: [
+      { to: '/prediction', label: 'Prediction', icon: BrainCircuit },
+      { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+      { to: '/ai-insights', label: 'AI Insights', icon: Sparkles },
+    ],
+  },
+  {
+    label: 'Manage',
+    items: [
+      { to: '/locations', label: 'Locations', icon: MapPin },
+      // Admin-only: hidden from viewers, who would only get 403 from the API.
+      { to: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
+      { to: '/settings', label: 'Settings', icon: Settings },
+    ],
+  },
 ]
 
 export default function Sidebar({ open, onClose }) {
-  const { logout, isAdmin } = useAuth()
+  const { logout, isAdmin, user } = useAuth()
   const navigate = useNavigate()
 
   const handleLogout = () => {
     logout()
     navigate('/')
   }
+
+  // Real session identity from the API login, never a fabricated profile.
+  const displayName = user?.name || user?.email || 'Signed in'
+  const roleLabel = user?.role === 'admin' ? 'Administrator' : 'Viewer'
 
   return (
     <>
@@ -58,37 +78,57 @@ export default function Sidebar({ open, onClose }) {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {NAV.filter((item) => !item.adminOnly || isAdmin).map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-                  isActive
-                    ? 'bg-brand/15 text-brand'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-                }`
-              }
-            >
-              <Icon className="h-5 w-5" />
-              {label}
-            </NavLink>
-          ))}
+        <nav aria-label="Primary" className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+          {NAV_GROUPS.map((group) => {
+            const items = group.items.filter((item) => !item.adminOnly || isAdmin)
+            if (items.length === 0) return null
+            return (
+              <div key={group.label}>
+                <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-600">
+                  {group.label}
+                </p>
+                <div className="space-y-1">
+                  {items.map(({ to, label, icon: Icon }) => (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      onClick={onClose}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                          isActive
+                            ? 'bg-brand/15 text-brand'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+                        }`
+                      }
+                    >
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                      {label}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </nav>
 
         <div className="border-t border-slate-800 p-3">
           <div className="mb-2 flex items-center gap-3 rounded-lg bg-slate-800/60 px-3 py-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/20">
-              <User className="h-4 w-4 text-brand" />
+              <User className="h-4 w-4 text-brand" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-slate-200">Admin</p>
-              <p className="text-[10px] text-slate-500">Monitoring Authority</p>
+              <p className="truncate text-xs font-semibold text-slate-200" title={displayName}>
+                {displayName}
+              </p>
+              <p className="text-[10px] text-slate-500">{roleLabel}</p>
             </div>
-            <button onClick={handleLogout} className="ml-auto text-slate-400 transition hover:text-red-400" title="Logout">
-              <LogOut className="h-4 w-4" />
+            <button
+              onClick={handleLogout}
+              className="ml-auto text-slate-400 transition hover:text-red-400"
+              title="Logout"
+              aria-label="Log out"
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>

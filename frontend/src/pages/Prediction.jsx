@@ -1,16 +1,25 @@
 import React, { useEffect, useState } from 'react'
-import { BrainCircuit, PlayCircle, ShieldCheck, ListChecks } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { BrainCircuit, PlayCircle, ShieldCheck, ListChecks, Eye, History, Info, AlertTriangle, Save } from 'lucide-react'
 import api from '../services/api'
 import RiskGauge from '../components/RiskGauge'
 import FactorBar from '../components/FactorBar'
 import RiskBadge from '../components/RiskBadge'
-import { riskMeta } from '../utils/risk'
+import RiskBandRuler from '../components/RiskBandRuler'
+import { useApi } from '../hooks/useApi'
+import { formatTs } from '../utils/risk'
 
 const LAND_COVERS = ['Dense Forest', 'Open Forest', 'Shrubland', 'Agriculture', 'Barren/Rocky']
 const SOIL_TYPES = ['Clay Loam', 'Sandy Loam', 'Loam', 'Clay', 'Sandy Clay Loam']
+const NUMERIC_FIELDS = ['historical_occurrence', 'temperature', 'rainfall', 'soil_moisture', 'humidity', 'elevation', 'slope']
 
+const CERTAINTY_HELP =
+  'Derived from how far the model probability is from 0.5 (range 55–95). This is not calibrated statistical confidence.'
+
+// location:'' (or null) is the API's read-only path: POST /api/predict only
+// writes when a monitored site name matches, so an ad-hoc run never mutates.
 const DEFAULTS = {
-  location: 'Churachandpur',
+  location: '',
   rainfall: 150,
   soil_moisture: 80,
   temperature: 24,
@@ -26,9 +35,13 @@ const DEFAULTS = {
 export default function Prediction() {
   const [form, setForm] = useState(DEFAULTS)
   const [result, setResult] = useState(null)
+  // Which monitored site (if any) the last result was written to. null = preview.
+  const [savedTo, setSavedTo] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [locations, setLocations] = useState([])
+
+  const history = useApi('/api/predictions')
 
   useEffect(() => {
     api.get('/api/locations').then((r) => setLocations(r.data || [])).catch(() => {})
@@ -36,7 +49,7 @@ export default function Prediction() {
 
   const set = (k) => (e) => {
     const v = e.target.value
-    setForm((f) => ({ ...f, [k]: ['historical_occurrence', 'temperature', 'rainfall', 'soil_moisture', 'humidity', 'elevation', 'slope'].includes(k) ? Number(v) : v }))
+    setForm((f) => ({ ...f, [k]: NUMERIC_FIELDS.includes(k) ? Number(v) : v }))
   }
 
   const pickLocation = (name) => {
@@ -55,22 +68,30 @@ export default function Prediction() {
     }
   }
 
+  const writes = Boolean(form.location)
+  const matchedSite = locations.find((l) => l.name === form.location) || null
+
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     setError(null)
     try {
-      const res = await api.post('/api/predict', form)
+      const payload = { ...form, location: form.location || null }
+      const res = await api.post('/api/predict', payload)
       setResult(res.data)
+      setSavedTo(matchedSite ? matchedSite.name : null)
+      if (matchedSite) history.reload()
     } catch (err) {
       setError(err?.response?.data?.detail || 'Prediction failed')
       setResult(null)
+      setSavedTo(null)
     } finally {
       setBusy(false)
     }
   }
 
-  const maxContrib = Math.max(1, ...(result?.contributing_factors || []).map((c) => c.contribution))
+  const nameById = new Map(locations.map((l) => [l.id, l.name]))
+  const historyRows = (Array.isArray(history.data) ? history.data : []).slice(0, 8)
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -85,21 +106,42 @@ export default function Prediction() {
         {/* Input form */}
         <form onSubmit={submit} className="card space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="label">Location (optional)</label>
-              <select className="input" value={form.location} onChange={set('location')}>
-                <option value="">Custom input…</option>
+            <div className="sm:col-span-2">
+              <label className="label" htmlFor="predict-location">
+                Monitoring site
+              </label>
+              <select
+                id="predict-location"
+                className="input"
+                value={form.location}
+                onChange={set('location')}
+                aria-describedby="predict-location-help"
+              >
+                <option value="">None — ad-hoc input (result is not saved)</option>
                 {locations.map((l) => (
-                  <option key={l.id} value={l.name}>{l.name}, {l.state}</option>
+                  <option key={l.id} value={l.name}>
+                    {l.name}, {l.state}
+                  </option>
                 ))}
               </select>
+              <p id="predict-location-help" className="mt-1 text-[11px] text-slate-500">
+                Choosing a site writes the result to that site's record. Choose "None" for a
+                throwaway calculation.
+              </p>
             </div>
-            <div>
-              <label className="label">Preload location data</label>
-              <button type="button" onClick={() => form.location && pickLocation(form.location)} className="btn-outline w-full justify-center">
-                Load from monitor
-              </button>
-            </div>
+
+            {matchedSite && (
+              <div className="sm:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => pickLocation(form.location)}
+                  className="btn-outline w-full justify-center"
+                >
+                  Load current conditions from monitor
+                </button>
+              </div>
+            )}
+
             <div>
               <label className="label">Rainfall (mm)</label>
               <input className="input" type="number" min="0" max="500" value={form.rainfall} onChange={set('rainfall')} />
@@ -136,7 +178,7 @@ export default function Prediction() {
                 {SOIL_TYPES.map((l) => <option key={l}>{l}</option>)}
               </select>
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <label className="label">Historical Landslide</label>
               <select className="input" value={form.historical_occurrence} onChange={set('historical_occurrence')}>
                 <option value={1}>Yes — occurred before</option>
@@ -145,18 +187,61 @@ export default function Prediction() {
             </div>
           </div>
 
+          {/* Write-back disclosure — shown before the action, not after it. */}
+          {writes ? (
+            <div className="flex gap-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2.5 text-xs text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <p>
+                Running with <b className="font-bold">{form.location}</b> selected will{' '}
+                <b>update that monitored site's stored risk score, level and certainty</b> and may
+                raise or resolve alerts. Use <b>"None"</b> for a preview that changes nothing.
+              </p>
+            </div>
+          ) : (
+            <div className="flex gap-2 rounded-lg border border-slate-700 bg-surface-light px-3 py-2.5 text-xs text-slate-400">
+              <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <p>
+                Preview mode — this run is read-only and is not written to any site record.
+              </p>
+            </div>
+          )}
+
           {error && (
             <p className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</p>
           )}
 
-          <button type="submit" disabled={busy} className="btn-primary w-full justify-center !py-3">
-            {busy ? <><BrainCircuit className="h-5 w-5 animate-pulse" /> Predicting…</> : <><PlayCircle className="h-5 w-5" /> Predict Landslide Risk</>}
-          </button>
+          <div className="space-y-2">
+            <button type="submit" disabled={busy} className="btn-primary w-full justify-center !py-3">
+              {busy ? (
+                <><BrainCircuit className="h-5 w-5 animate-pulse" /> Predicting…</>
+              ) : writes ? (
+                <><Save className="h-5 w-5" /> Run prediction and update {form.location}</>
+              ) : (
+                <><PlayCircle className="h-5 w-5" /> Run prediction (preview, not saved)</>
+              )}
+            </button>
+            {matchedSite && (
+              <Link to="/map" className="btn-outline w-full justify-center">
+                <Eye className="h-4 w-4" /> View monitored location on Risk Map
+              </Link>
+            )}
+          </div>
         </form>
 
         {/* Results */}
-        <div className="card">
-          <h3 className="mb-4 font-bold">Prediction Result</h3>
+        <div className="card" aria-live="polite">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold">Prediction Result</h3>
+            {result && (
+              <span
+                className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                  savedTo ? 'bg-amber-500/15 text-amber-300' : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {savedTo ? `Saved to ${savedTo}` : 'Preview only · not stored'}
+              </span>
+            )}
+          </div>
           {!result ? (
             <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-center text-slate-500">
               <BrainCircuit className="h-12 w-12" />
@@ -168,12 +253,20 @@ export default function Prediction() {
                 <RiskGauge score={result.risk_score} level={result.risk_level} />
                 <div className="mt-2 flex items-center gap-2">
                   <RiskBadge level={result.risk_level} score={result.risk_score} />
-                  <span className="text-xs text-slate-400">Confidence {Math.round(result.confidence)}%</span>
+                  <span className="text-xs text-slate-400" title={CERTAINTY_HELP}>
+                    Model certainty {Math.round(result.confidence)}%
+                  </span>
                 </div>
+                <p className="mt-1 text-[11px] text-slate-500" title={CERTAINTY_HELP}>
+                  {CERTAINTY_HELP}
+                </p>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Probability: {(result.probability * 100).toFixed(1)}% · {result.model}
+                  Probability {(result.probability * 100).toFixed(1)}% · {result.model} · input data{' '}
+                  <b className="text-slate-400">{result.data_source}</b>
                 </p>
               </div>
+
+              <RiskBandRuler score={result.risk_score} level={result.risk_level} probability={result.probability} />
 
               <div className="rounded-lg border border-slate-700 bg-surface-light p-4">
                 <p className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
@@ -181,9 +274,14 @@ export default function Prediction() {
                 </p>
                 <div className="space-y-3">
                   {result.contributing_factors.slice(0, 6).map((c) => (
-                    <FactorBar key={c.factor} factor={c.factor} contribution={c.contribution} max={maxContrib} />
+                    <FactorBar key={c.factor} factor={c.factor} contribution={c.contribution} max={100} />
                   ))}
                 </div>
+                <p className="mt-3 text-[11px] text-slate-500">
+                  Contribution scores (0–100) reported by the model for this run — how far each
+                  input sits in its risky range. Not a per-prediction decomposition of the forest
+                  and not feature importance.
+                </p>
               </div>
 
               <div className="rounded-lg border border-slate-700 bg-surface-light p-4">
@@ -201,6 +299,70 @@ export default function Prediction() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Stored prediction history — read-only GET /api/predictions */}
+      <div className="card">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="flex items-center gap-2 font-bold">
+              <History className="h-5 w-5 text-brand" aria-hidden="true" /> Recent stored predictions
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Read-only history recorded by the API (newest first). Rows created before this build
+              may predate it.
+            </p>
+          </div>
+          <button type="button" className="btn-outline !py-1.5 text-xs" onClick={history.reload}>
+            Refresh
+          </button>
+        </div>
+        {history.error ? (
+          <p className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-3 text-xs text-red-300">
+            {history.error}
+          </p>
+        ) : historyRows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-500">
+            {history.loading ? 'Loading…' : 'No predictions stored yet.'}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <caption className="sr-only">Most recent stored model predictions</caption>
+              <thead className="text-[11px] uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th scope="col" className="px-3 py-2">Site</th>
+                  <th scope="col" className="px-3 py-2">Level</th>
+                  <th scope="col" className="px-3 py-2">Score</th>
+                  <th scope="col" className="px-3 py-2">Probability</th>
+                  <th scope="col" className="px-3 py-2">Certainty</th>
+                  <th scope="col" className="px-3 py-2">Recorded</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {historyRows.map((p) => (
+                  <tr key={p.id}>
+                    <td className="px-3 py-2 font-semibold text-slate-200">
+                      {nameById.get(p.location_id) || `Site #${p.location_id}`}
+                    </td>
+                    <td className="px-3 py-2"><RiskBadge level={p.risk_level} score={p.risk_score} /></td>
+                    <td className="px-3 py-2 text-slate-300">{Math.round(p.risk_score)}</td>
+                    <td className="px-3 py-2 text-slate-300">{(p.probability * 100).toFixed(1)}%</td>
+                    <td className="px-3 py-2 text-slate-400" title={CERTAINTY_HELP}>
+                      {Math.round(p.confidence)}%
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{formatTs(p.timestamp)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 flex items-start gap-1.5 text-[11px] text-slate-500">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          Certainty is derived from how far the model probability is from 0.5 — it is not
+          calibrated statistical confidence. Model card details are on the AI Insights page.
+        </p>
       </div>
     </div>
   )
