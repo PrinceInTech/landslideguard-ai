@@ -42,6 +42,7 @@ from app.schemas.acquisition import (
 )
 from app.schemas.acquisition import utcnow_aware
 from app.schemas.provenance import GeographicCoverage
+from app.services import cds as cds_client
 
 #: Constants for the approved REAL-data sources (verified in Phase 2.3). This
 #: flat list is the single source of truth the rig and tests both reference.
@@ -763,6 +764,171 @@ class AcquisitionDriver:
             storage_path=relative_path,
             source_record_id=source_record_id,
             product_version=product_version,
+            observation_start_utc=observation_start_utc,
+            observation_end_utc=observation_end_utc,
+            available_utc=available_utc,
+        )
+        _persist_record(manifest, record, self.manifest_path)
+        return record
+
+    # -- CDS acquisition -----------------------------------------------------
+    def acquire_cds(
+        self,
+        *,
+        dataset: str,
+        inputs: dict,
+        acquisition_key: str | None = None,
+        source_record_id: str | None = None,
+        observation_start_utc: datetime | None = None,
+        observation_end_utc: datetime | None = None,
+        available_utc: datetime | None = None,
+        expected_sha256: str | None = None,
+        cds: cds_client.CdsTransport | None = None,
+    ) -> AcquisitionRecord:
+        """Acquire one artifact through the CDS async job flow into the ledger.
+
+        Mirrors :meth:`acquire` (credential gate, immutable storage, SHA-256
+        dedupe, honest failure records) but drives the real CDS two-phase API:
+        submit execution -> poll -> download the result reference. The access
+        token is read through :func:`resolve_credentials` and kept in memory
+        only; the request snapshot stored in the ledger never contains it.
+
+        Raises the same contract exceptions as :meth:`acquire`; a failed job or
+        timed-out submission is recorded as ``failed`` before raising
+        :class:`AcquisitionError`.
+        """
+        source = self.source
+        if source.authentication is not AuthenticationMethod.CDS_API:
+            raise AcquisitionError(
+                f"source {source.name!r} is not a CDS API source; acquire_cds "
+                "requires authentication=cds-api"
+            )
+        creds = resolve_credentials(source)
+        transport = cds or cds_client.CdsTransport(
+            api_url=creds["CDS_API_URL"],
+            api_key=creds["CDS_API_KEY"],
+        )
+
+        if not isinstance(inputs, dict) or not inputs:
+            raise InvalidRetrievalRequestError(
+                f"source {source.name!r}: CDS acquisition requires a non-empty inputs dict"
+            )
+        params = {"dataset": dataset, "inputs": dict(inputs)}
+        acquisition_key = acquisition_key or utcnow_aware().strftime("%Y%m%dT%H%M%SZ")
+        manifest = load_acquisition_manifest(self.manifest_path)
+        retrieved_utc = utcnow_aware()
+
+        def fail(kind: AcquisitionStatus, *, error: str, sha: str | None = None, rec_id: str | None = None):
+            record = _make_record(
+                source,
+                acquisition_key=acquisition_key,
+                params=params,
+                status=kind,
+                retrieved_utc=retrieved_utc,
+                sha256=sha,
+                error=error,
+                source_record_id=rec_id,
+                observation_start_utc=observation_start_utc,
+                observation_end_utc=observation_end_utc,
+                available_utc=available_utc,
+            )
+            _persist_record(manifest, record, self.manifest_path)
+            return record
+
+        # 1. Submit the execution.
+        try:
+            job_id = transport.submit(dataset, dict(inputs))
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=source_record_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 2. Poll until the job finishes (or the waiting budget is exhausted).
+        try:
+            _status, _message = transport.wait_for_success(job_id)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 3. Read the result assets.
+        try:
+            assets = transport.results(job_id)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+        if not assets or not isinstance(assets[0].get("href"), str):
+            error = f"CDS job {job_id} succeeded but returned no downloadable asset"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}")
+
+        asset = assets[0]
+        extension = cds_client.asset_extension(asset)
+        relative_path = storage_relative_path(source, acquisition_key, extension)
+        target = self.raw_root / relative_path
+        if target.exists():
+            raise DuplicateArtifactError(
+                f"artifact already exists and will never be overwritten: {target}"
+            )
+
+        # 4. Download the bytes.
+        retrieved_utc = utcnow_aware()
+        try:
+            data = transport.download(asset["href"])
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 5. Checksum (caller's value wins; otherwise the provider-declared one).
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        expected = expected_sha256 or cds_client.provider_sha256(asset)
+        if expected and expected.lower() != actual_sha256:
+            error = f"checksum mismatch: expected {expected}, got {actual_sha256}"
+            fail(AcquisitionStatus.CHECKSUM_MISMATCH, error=error, sha=actual_sha256, rec_id=job_id)
+            raise ChecksumMismatchError(f"{source.name}: {error}")
+
+        # 6. Content dedupe: identical bytes already kept -> skipped_existing.
+        kept = (AcquisitionStatus.DOWNLOADED, AcquisitionStatus.SKIPPED_EXISTING)
+        existing = [
+            record
+            for record in manifest.records
+            if record.kind == source.kind
+            and record.source == source.name
+            and record.status in kept
+            and record.sha256 == actual_sha256
+        ]
+        if existing:
+            record = _make_record(
+                source,
+                acquisition_key=acquisition_key,
+                params=params,
+                status=AcquisitionStatus.SKIPPED_EXISTING,
+                retrieved_utc=retrieved_utc,
+                sha256=actual_sha256,
+                file_size_bytes=len(data),
+                storage_path=existing[0].storage_path,
+                source_record_id=job_id,
+                observation_start_utc=observation_start_utc,
+                observation_end_utc=observation_end_utc,
+                available_utc=available_utc,
+            )
+            _persist_record(manifest, record, self.manifest_path)
+            return record
+
+        # 7. Store immutably.
+        _atomic_write(target, data)
+        record = _make_record(
+            source,
+            acquisition_key=acquisition_key,
+            params=params,
+            status=AcquisitionStatus.DOWNLOADED,
+            retrieved_utc=retrieved_utc,
+            sha256=actual_sha256,
+            file_size_bytes=len(data),
+            storage_path=relative_path,
+            source_record_id=job_id,
             observation_start_utc=observation_start_utc,
             observation_end_utc=observation_end_utc,
             available_utc=available_utc,

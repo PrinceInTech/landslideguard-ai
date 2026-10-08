@@ -417,13 +417,35 @@ def test_demo_kind_record_is_allowed_and_separated(tmp_path):
     assert acquired_real_count(manifest) == 1
 
 
-def test_committed_manifest_has_zero_acquired_real_artifacts():
+def test_committed_manifest_reflects_acquired_real_artifacts():
     path = PROJECT_ROOT / "data" / "provenance" / "acquisition_manifest.json"
     assert path.exists(), "acquisition ledger must be committed"
     manifest = load_acquisition_manifest(path)
     assert manifest.contract_version == "1.1.0"
-    assert manifest.records == [], "adapters/configuration must not imply acquired data"
-    assert acquired_real_count(manifest) == 0
+    kept_statuses = (AcquisitionStatus.DOWNLOADED, AcquisitionStatus.SKIPPED_EXISTING)
+    expected = {
+        "REAL-chirps-v2.0-2026-08-31",
+        "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+    }
+    actual = {
+        record.record_id
+        for record in manifest.records
+        if record.kind == "REAL" and record.status in kept_statuses
+    }
+    assert actual == expected, "committed ledger must reflect exactly the acquired artifacts"
+    for record in manifest.records:
+        if record.kind != "REAL":
+            continue
+        if record.status in kept_statuses:
+            assert record.status == AcquisitionStatus.DOWNLOADED
+            assert record.storage_path
+            raw_file = PROJECT_ROOT / "data" / "raw" / "real" / record.storage_path
+            if raw_file.is_file():
+                assert raw_file.stat().st_size == record.file_size_bytes
+        else:
+            assert record.storage_path is None, "a non-acquired record must not claim a storage_path"
+            assert record.error, "an honest failure must carry an error message"
+    assert acquired_real_count(manifest) == 2
 
 
 # ---------------------------------------------------------------------------
