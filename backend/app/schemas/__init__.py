@@ -30,6 +30,27 @@ from app.schemas.acquisition import (  # noqa: F401,E402
     SourceConfig,
 )
 
+# Feature-extraction schemas (Phase 3.7.1). Re-exported for the same
+# discoverability reason as the acquisition schemas above.
+from app.schemas.features import (  # noqa: F401,E402
+    CANONICAL_CRS,
+    CHIRPS_NODATA,
+    COORDINATE_PRECISION_BY_SOURCE,
+    ERA5_LAND_VARIABLE_MAP,
+    FEATURE_CONTRACT_VERSION,
+    FEATURE_SPECS,
+    FeatureExtractionRequest,
+    FeatureExtractionResult,
+    FeatureKind,
+    FeatureProvenance,
+    FeatureSpec,
+    FeatureStatus,
+    FeatureValue,
+    Position,
+    StudyRegion,
+    supported_features,
+)
+
 # Re-exported for backwards compatibility: callers previously imported the
 # risk helper from this module. Canonical definition lives in app.risk.
 # (Deliberately no `__all__`: this module exports the request/response models
