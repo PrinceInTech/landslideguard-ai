@@ -19,6 +19,17 @@ from app.schemas.provenance import (  # noqa: F401,E402
     TemporalCoverage,
 )
 
+# Acquisition schemas (Phase 3.2). Re-exported for the same discoverability
+# reason as the provenance schemas above.
+from app.schemas.acquisition import (  # noqa: F401,E402
+    AcquisitionManifest,
+    AcquisitionRecord,
+    AcquisitionStatus,
+    AuthenticationMethod,
+    PreflightReport,
+    SourceConfig,
+)
+
 # Re-exported for backwards compatibility: callers previously imported the
 # risk helper from this module. Canonical definition lives in app.risk.
 # (Deliberately no `__all__`: this module exports the request/response models

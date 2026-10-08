@@ -136,6 +136,15 @@ class Settings:
     )
     RAW_DATA_DIR = Path(os.getenv("RAW_DATA_DIR") or (PROJECT_ROOT / "data" / "raw"))
 
+    # Acquisition rig (Phase 3.2). Raw REAL bytes land under data/raw/real/
+    # (git-ignored via data/raw/.gitignore); the committed acquisition ledger
+    # records only metadata, so large datasets never enter Git.
+    ACQUISITION_MANIFEST = Path(
+        os.getenv("ACQUISITION_MANIFEST")
+        or (PROJECT_ROOT / "data" / "provenance" / "acquisition_manifest.json")
+    )
+    RAW_REAL_DIR = Path(os.getenv("RAW_REAL_DIR") or (RAW_DATA_DIR / "real"))
+
     # Cap on dataset uploads so an oversized file is rejected instead of being
     # buffered entirely in memory. nginx enforces the same limit.
     MAX_UPLOAD_BYTES = _upload_limit_bytes()

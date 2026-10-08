@@ -7,3 +7,9 @@
 *
 !.gitignore
 !README.md
+
+# data/raw/real/ holds acquired REAL raw bytes. The whole sub-tree stays
+# ignored; only the placeholder is tracked so the directory is visible in a
+# fresh clone.
+!real/
+!real/.gitkeep

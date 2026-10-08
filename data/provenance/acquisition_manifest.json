@@ -1,0 +1,11 @@
+{
+  "contract_version": "1.1.0",
+  "generated_at_utc": "2026-10-08T05:15:00Z",
+  "records": [],
+  "notes": [
+    "Acquisition ledger (Phase 3.2). One record per actual retrieval attempt (downloaded, skipped_existing, checksum_mismatch, failed) for DEMO and REAL acquisition events.",
+    "No REAL artifact has been acquired yet: registering adapters/configuration never implies that REAL data exists. The REAL acquired count is 0.",
+    "Raw bytes are stored under data/raw/real/ (git-ignored) with immutable filenames and SHA-256; this ledger is committed metadata only.",
+    "Schema: backend/app/schemas/acquisition.py. Rig: backend/app/services/acquisition.py. See docs/acquisition.md."
+  ]
+}
