@@ -1694,3 +1694,430 @@ configuration (G-3) are hardened and covered by an offline test matrix. Q6
 remains `EXTERNAL_EVIDENCE_REQUIRED`; historical acquisition remains
 `READY_FOR_ACQUISITION_PLANNING`; temporal feature computation remains
 `NEEDS_EVIDENCE`; production remains `NO-GO`.
+
+---
+
+## 22. Phase 3.7.4A — Historical data evidence gap audit
+
+### 22.1 Scope and method
+
+Evidence-only audit (no acquisition, no model/feature expansion). Goal: establish
+exactly which historical-data provenance requirements remain unverified for the
+existing CHIRPS and ERA5-Land artifacts. Everything below is derived from
+committed repository evidence only — code, schema, ledger, tests, and this
+document. No provider source was re-inspected during this phase; where a claim
+needs provider-issued evidence it is stated as unresolved, never as verified.
+
+### 22.2 Artifact inventory (repository evidence only)
+
+| # | artifact | status | storage_path | sha256 | size |
+|---|----------|--------|--------------|--------|------|
+| 1 | `chirps-v2.0.2026.08.31.tif.gz` | downloaded | `chirps/chirps__v2.x__2026-08-31.tif.gz` | `44934651…` | 10,288,665 B |
+| 2 | ERA5-Land hourly `2026-07-15t0000.nc` | downloaded | `era5-land/era5-land__…2026-07-15t0000.nc` | `af53a81a…` | 127,970 B |
+
+Both files exist on disk under `data/raw/real/` (git-ignored); the ledger
+(`data/provenance/acquisition_manifest.json`) is the committed record of six
+attempts (1 CHIRPS success, 4 ERA5-Land failures honestly recorded, 1 ERA5-Land
+success).
+
+### 22.3 The four time concepts, separated
+
+| concept | meaning | CHIRPS | ERA5-Land |
+|---------|---------|--------|-----------|
+| `observation_start_utc`/`end` | measurement window | `[2026-08-31T00:00Z, 2026-09-01T00:00Z)` (daily) | `[2026-07-15T00:00Z, 2026-07-15T01:00Z)` (hourly) |
+| provider availability / vintage | when the exact vintage became public | `2026-09-11T21:10:59Z` | `2026-09-15T00:00:00Z` |
+| `retrieved_utc` | when we asked for the bytes | `2026-10-08T09:28:03Z` | `2026-10-08T11:09:48Z` |
+| `acquired_utc` | when registered in the ledger | `2026-10-08T09:28:21Z` | `2026-10-08T11:09:48Z` |
+| prediction cutoff | when model inputs would be frozen | request-supplied | request-supplied |
+
+The code never conflates these: `available_utc` is caller/rule-supplied into
+`AcquisitionDriver.acquire` (`acquisition.py:780`) and `acquire_cds`
+(`acquisition.py:969`) and is never parsed from HTTP `Date`/`Last-Modified`;
+`retrieved_utc`/`acquired_utc` are always local access times. Verified by the
+audit sub-report and existing tests (`test_cds_acquisition.py:809-823`).
+
+### 22.4 Per-timestamp evidence classification
+
+Legend: **V** = independently verified provider evidence; **R** =
+repository-derived evidence; **E** = engineering assumption; **X** = unresolved /
+external evidence required.
+
+| timestamp | support | class | basis |
+|-----------|---------|-------|-------|
+| CHIRPS observation window | filename (`chirps-v2.0.2026.08.31`), product semantics (v2 = start-of-UTC-day), file inspection | **R** | contradicts nothing; ±1-day offset risk documented in `known_limitations` |
+| CHIRPS `available_utc 2026-09-11T21:10:59Z` | present only in ledger/test fixtures; `Last-Modified` never captured at acquisition; no in-repo derivation | **X** (possibly E) | wholly unresolved (Q6). Matches a test-only `Date` header string but that is coincidence repeated in fixtures, not a derivation |
+| CHIRPS `retrieved_utc`/`acquired_utc` | committed ledger timestamps | **R** | we performed the retrieval on 2026-10-08 |
+| ERA5-Land observation window | CDS job request (`year/month/day` 2026-07-15, `time` 00:00) + file `valid_time` 2026-07-15T00:00Z | **R** | hourly half-open interval |
+| ERA5-Land `available_utc 2026-09-15T00:00:00Z` | ledger note: "DERIVED conservative bound; CDS exposes no per-vintage availability timestamp; consolidated ~2 months per registry" | **E** | conservative bound, not provider-issued (Q7) |
+| ERA5-Land `retrieved_utc`/`acquired_utc` | committed ledger (`2026-10-08T11:09:48Z`) | **R** | we performed the retrieval |
+
+**Neither availability timestamp is independently verified provider evidence.**
+This matches the standing decisions: Q6 (`EXTERNAL_EVIDENCE_REQUIRED`) and Q7
+(`EXTERNAL_EVIDENCE_REQUIRED`).
+
+### 22.5 Official sources still required
+
+- **CHIRPS (`chirps-v2.0.2026.08.31`):** any one of (a) the exact file's
+  provider HTTP `Last-Modified` or directory-listing timestamp captured at
+  retrieval time with URL and status; (b) CHC publication-schedule
+  documentation for FINAL v2 daily files; or (c) ERDDAP catalog metadata for
+  that file. The provider publication/cadence statement in the ledger is a
+  statement about data currency, not this file's publication instant.
+- **ERA5-Land (vintage 2026-07-15 00:00):** a provider-issued per-vintage
+  availability timestamp, or a documented, versioned conservative rule with a
+  measured safety margin and audit trail (production), vs. the labelled derived
+  bound (research/replay only, per Q7 acceptance conditions).
+
+### 22.6 Audit: does code/tests treat a guessed available_utc as authoritative?
+
+Read of `backend/app/services/features.py` and `backend/app/schemas/*`:
+
+- `evaluate_leakage` (`features.py:121-141`) rejects only when
+  `available_utc is not None and available_utc > prediction_cutoff_utc`
+  (line 139). It never inspects `availability_classification`.
+- `FeatureProvenance.available_utc` is copied verbatim from the record
+  (`build_feature_provenance`, `features.py:391`); the feature schema carries no
+  classification field.
+- `AcquisitionRecord.availability_classification` (`schemas/acquisition.py:169`)
+  is a bare `Literal`, defaults `None`, and no validator requires it whenever
+  `available_utc` is set. The two committed REAL records both carry
+  `available_utc` with **no** classification.
+
+**Finding G-4 (documented, not "fixed"):** the leakage gate and the feature
+contract are classification-blind — a `derived` or unverified `available_utc`
+clears a cutoff exactly like a `provider_issued` one, and an unclassified
+`available_utc` is indistinguishable downstream from a verified one. Separately,
+when `available_utc` is `None` the vintage rule is skipped, so missing provider
+evidence is never converted into a verified timestamp but is also not treated as
+leaky on its own. No app code was changed; the behavior is pinned by regression
+tests so a future classification-aware gate must update them.
+
+### 22.7 Regression tests added (offline)
+
+`backend/tests/test_feature_contract.py`:
+
+- `test_available_utc_can_be_unclassified_and_gate_is_classification_blind` —
+  schema accepts available_utc without classification (as the committed REAL
+  records do); `derived` and `provider_issued` classifications produce identical
+  `evaluate_leakage` outcomes (VALID ≤ cutoff, REJECTED > cutoff).
+- `test_unknown_availability_is_not_fabricated_and_not_rejected` —
+  `available_utc=None` keeps the vintage rule inactive; no timestamp is
+  fabricated, and the observation-window rule alone decides.
+
+### 22.8 Verification
+
+- `python -m pytest -o addopts="" tests/test_feature_contract.py tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **171 passed**.
+- Manifest: blob `07dc2cdd36fa6772b74dcf6a7a96706d99eb593c`, SHA-256
+  `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`
+  (unchanged); contract version `1.1.0` (unchanged); artifacts on disk
+  unchanged.
+- HEAD `0a1bd19ddafb8d11575c0a0ac22adaafd6987a5f`; only intended working-tree
+  changes (test file + this section).
+
+### 22.9 Verdict
+
+Both `available_utc` values remain `EXTERNAL_EVIDENCE_REQUIRED` (unverified /
+derived); the classification-blind gate (G-4) is documented and pinned, and no
+missing provider evidence has been converted into a verified timestamp. Q6 remains
+`EXTERNAL_EVIDENCE_REQUIRED`; historical acquisition remains
+`READY_FOR_ACQUISITION_PLANNING`; temporal feature computation remains
+`NEEDS_EVIDENCE`; production remains `NO-GO`. No external ERA5-Land or CHIRPS
+publication/availability evidence is claimed.
+
+## 23. Phase 3.7.4B — Availability provenance gate (G-4 resolution)
+
+### 23.1 Problem (restates 22.6 G-4)
+
+`evaluate_leakage` (`backend/app/services/features.py:121-141`) decided leakage
+from the raw `available_utc` value only; it never inspected
+`AcquisitionRecord.availability_classification`, `FeatureProvenance` carried no
+classification field, and when `available_utc` was `None` the vintage rule was
+skipped. A derived or unclassified timestamp therefore cleared a prediction
+cutoff exactly like a `provider_issued` one, and the feature-layer output gave a
+downstream consumer no way to tell the difference.
+
+### 23.2 Design decision (implemented, backward compatible)
+
+- `evaluate_leakage` is kept unchanged as the pure **time rule** (observation
+  window and product vintage at or before the cutoff; deterministic).
+- A second deterministic gate, `evaluate_availability_policy(record, *,
+  availability_policy)` (`services/features.py`), consults the record's
+  `availability_classification`. `run_extraction` now applies both gates.
+- `FeatureExtractionRequest.availability_policy`
+  (`Literal["research_replay", "production"]`, default `"research_replay"`) is
+  an **additive** optional field. The default preserves the pre-Phase 3.7.4B
+  default behaviour for every record that carries a timestamp; `production` is
+  the strict, opt-in policy.
+- `FeatureProvenance.availability_classification` (additive, default `None`) is
+  copied verbatim from the acquisition record, so a research/replay feature made
+  from a derived/unknown/unclassified timestamp is visibly labelled instead of
+  being presented as provider-issued.
+- The feature contract stays **1.0.0** (additions are additive, per the module
+  docstring policy). The acquisition manifest and its contract **1.1.0** are not
+  touched; no record, artifact bytes, or schema field is removed or renamed.
+
+### 23.3 Acceptance policy (one dimension per policy)
+
+| `available_utc` | `availability_classification` | research_replay | production | feature output label |
+|---|---|---|---|---|
+| present | `provider_issued` | usable | usable | `provider_issued` |
+| present | `derived` | usable | `rejected_leakage` | `derived` |
+| present | `unknown` | usable | `rejected_leakage` | `unknown` |
+| present | `None` (unclassified) | usable | `rejected_leakage` | `None` |
+| `None` | any | `rejected_leakage` | `rejected_leakage` | — |
+
+The per-case rationale mapped to the task-framed cases:
+
+1. **`provider_issued`** — the only evidence that clears a production gate; the
+   pure time rule still applies on top.
+2. **`derived`** — a conservative estimate, never a measured publication
+   instant; usable for research/replay only and always labelled `derived`.
+   Production rejects it: a derived vintage must not silently pass.
+3. **`unknown`** — exactly the "QR" case explored in §22.4/§22.5; usable for
+   research/replay only, labelled `unknown`.
+4. **`None` (unclassified) with a timestamp** — the committed REAL record state;
+   usable for research/replay only, output labelled `None` (unclassified). This
+   is the crux of G-4: unclassified today is indistinguishable-from-verified
+   downstream, so production refuses it while research/replay keeps working and
+   labels the gap.
+5. **missing timestamp (`available_utc=None`)** — rejected under **both**
+   policies. A cutoff can only be placed against a timestamp that exists; absent
+   evidence is never fabricated into a verified timestamp and never treated as
+   provably non-leaky. This hardens the Phase 3.7.4A finding that `None`
+   silently skipped the vintage rule.
+6. **legacy/synthetic records** — land under cases 4-5 by their fields; no
+   separate code path exists or is needed. `AcquisitionRecord` is unchanged, so
+   any previously loadable ledger loads identically.
+
+### 23.4 Behaviour changes and superseded regressions
+
+`backend/tests/test_feature_contract.py`:
+
+- **Superseded** `test_available_utc_can_be_unclassified_and_gate_is_classification_blind`
+  (Phase 3.7.4A): it pinned the classification-blind behaviour (identical
+  outcomes for derived/unclassified/provider_issued). It is replaced by the
+  one-dimensional policy rules in §23.3. Superseding is intentional and
+  documented here; a test that pins a known unsafe behaviour must not be kept
+  once the design fixes it.
+- **Superseded** `test_unknown_availability_is_not_fabricated_and_not_rejected`
+  (Phase 3.7.4A): the missing-timestamp case now returns `rejected_leakage` under
+  both policies. The "never fabricated" guarantee is kept (the record's
+  `available_utc` stays `None`).
+
+No other behaviour changed: the default `research_replay` policy still extracts
+every committed REAL record (both carry `available_utc`; both are unclassified),
+and all pre-existing leakage, determinism, nodata, schema, and real-artifact
+tests pass unchanged.
+
+### 23.5 Impact on the current committed data
+
+- **CHIRPS** (`available_utc 2026-09-11T21:10:59Z`, classification `None`):
+  research/replay usable, output labelled unclassified; production `rejected_leakage`
+  until Q6 is resolved to provider-issued evidence and the record is classified
+  `provider_issued`.
+- **ERA5-Land** (`available_utc 2026-09-15T00:00Z`, classification `None`; the
+  ledger note states this value is a DERIVED conservative bound): research/replay
+  usable, output labelled unclassified (honest bound, not asserted as
+  provider-issued); production `rejected_leakage` until Q7 is resolved.
+
+### 23.6 Q6/Q7 naming consistency note
+
+The decision register (§3, §7A) assigns **Q6 = CHIRPS** availability derivation
+evidence and **Q7 = ERA5-Land** availability evidence, both
+`EXTERNAL_EVIDENCE_REQUIRED`. Earlier sections (§19.7, §21.9) used "Q6" loosely
+for both sources. This section does not relabel anything; the canonical mapping
+to use going forward is **Q6 = CHIRPS, Q7 = ERA5-Land**.
+
+### 23.7 Tests added (offline)
+
+- `test_production_policy_rejects_unverified_availability`
+- `test_production_policy_rejects_missing_timestamp`
+- `test_production_policy_accepts_provider_issued_before_cutoff`
+- `test_research_policy_accepts_labelled_availability`
+- `test_research_policy_rejects_missing_timestamp`
+- `test_provenance_carries_availability_classification`
+- `test_run_extraction_default_research_policy_labels_output`
+- `test_run_extraction_production_gate_rejects_unverified`
+- `test_run_extraction_production_gate_accepts_provider_issued`
+
+### 23.8 Verification
+
+- Focused:
+  `python -m pytest -o addopts="" tests/test_feature_contract.py tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **178 passed** (3.7.4A: 171; −2 superseded + 9 added).
+- Full: `python -m pytest -o addopts=""` → **322 passed** (3.7.4A: 315; +7 net),
+  3 benign sklearn `InconsistentVersionWarning` (pre-existing, unchanged).
+- Manifest: blob `07dc2cdd36fa6772b74dcf6a7a96706d99eb593c`, SHA-256
+  `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`
+  (unchanged); contract versions unchanged (manifest `1.1.0`, feature `1.0.0`).
+- Secret scan: 117 files / 4 `.env` values → 0 hits (unchanged).
+- `git diff --check` clean; `FEATURE_CONTRACT_VERSION` and manifest untouched.
+
+### 23.9 Verdict
+
+G-4 is resolved at the feature layer: an unverified timestamp can no longer
+silently clear a production-grade gate, missing availability evidence can no
+longer clear any gate, and research/replay output now labels the strength of the
+availability evidence it used. Production remains **NO-GO** for both committed
+artifacts (neither record is `provider_issued`); temporal feature computation
+remains `NEEDS_EVIDENCE` for production-grade features; Q6/Q7 remain
+`EXTERNAL_EVIDENCE_REQUIRED`. No external publication/availability evidence is
+claimed anywhere in this phase.
+
+## 24. Phase 3.7.4C — Availability policy integration & release-safety audit
+
+### 24.1 Scope and method
+
+Read-only audit plus minimal, justified hardening. Goal: prove that
+`evaluate_availability_policy()` (added in §23 / Phase 3.7.4B) is actually
+reached by every production-grade feature-extraction path, and that no
+bypass exists. Method: repository grep across all Python sources, API route
+files, CLI/jobs/batch/training/evaluation/replay entry points, and the schema
+exports; direct runtime checks of default, invalid-policy and serialization
+behaviour; regression tests only where a genuine gap was found.
+
+### 24.2 Working-tree integrity at start
+
+- HEAD `0a1bd19ddafb8d11575c0a0ac22adaafd6987a5f` (expected; unchanged all phase).
+- Modified files: exactly the four intended Phase 3.7.4A/3.7.4B files
+  (`backend/app/schemas/features.py`, `backend/app/services/features.py`,
+  `backend/tests/test_feature_contract.py`, `docs/historical-data-coverage.md`).
+- Manifest: blob `07dc2cdd36fa6772b74dcf6a7a96706d99eb593c` (`git hash-object`),
+  SHA-256 `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`,
+  contract **1.1.0**; file unmodified.
+- Feature contract stays **1.0.0** (all additions additive).
+
+### 24.3 Entry points inspected and their effective policy
+
+`git grep` for `run_extraction`, `evaluate_leakage`, `evaluate_availability_policy`,
+`FeatureExtractionRequest`, `FeatureProvenance`, and the REAL readers
+(`read_chirps_grid` / `read_era5_land_variables`) over every source, excluding
+tests and docs:
+
+| entry point | kind | effective policy | verdict |
+|---|---|---|---|
+| `app/services/features.py::run_extraction` | the only feature-extraction path | `research_replay` (default) unless the caller sets `production`; both gates run inside | gate enforced; production is opt-in |
+| `app/api/prediction.py` `/api/predict`, `/api/predict/location/{id}` | demo inference | does **not** call `run_extraction`; feeds `predictor.predict` from `weather_provider` (DEMO/OpenWeather) | out of scope of the REAL contract; no feature extraction |
+| `app/api/*` (locations, alerts, analytics, auth, admin, health) | demo CRUD/telemetry | no feature-extraction call | no bypass |
+| `ml/train.py`, `ml/evaluate.py`, `ml/data/generate_data.py` | demo training/eval | use `data/historical_landslide_data.csv` + sklearn; no `run_extraction`, no REAL readers | no bypass |
+| `app/ml/predictor.py`, `app/risk.py` | demo inference services | rule/RandomForest on DEMO features | no bypass |
+
+There are **no CLI, scheduled jobs, batch, replay or evaluation entry points**
+anywhere in the repository that consume the feature contract; the only non-test
+reference to `FeatureExtractionRequest`/`FeatureProvenance` outside the feature
+module is the schema re-export in `backend/app/schemas/__init__.py`. The feature
+layer remains, by its own contract (`schemas/features.py` module docstring),
+"wired into neither the DEMO prediction path, the ML model, any API route, nor
+the UI" — this audit confirms that statement is still true.
+
+**Conclusion: consistent enforcement.** Every code path that can produce REAL
+features goes through `run_extraction`, and `run_extraction` always evaluates
+both gates (time gate + availability-evidence gate) before any decode/sampling.
+There is no second path into the readers: `_read_source_features` is the only
+caller of the decoders and is itself reachable only after both gates pass.
+Because no production entry point exists yet, none can today "inherit the
+research default" silently.
+
+### 24.4 Request, default and persistence validation
+
+- **Default is explicit.** `FeatureExtractionRequest.availability_policy`
+  defaults to `"research_replay"` (schema field, additive). Verified at runtime.
+- **Production is opt-in.** Any future production caller must pass
+  `availability_policy="production"` explicitly; the schema `Literal` has no
+  coercive casing, so typo'd values cannot sneak in as research.
+- **Invalid values fail closed (twice).** (a) At the typed boundary,
+  `availability_policy="PRODUCTION"` / `"prod"` raises pydantic
+  `ValidationError` (verified at runtime; new test). (b) At the pure-function
+  boundary, `evaluate_availability_policy` now raises `FeatureContractError`
+  for any value outside the allowlist instead of treating it as research
+  (hardened this phase; new test). `run_extraction` can only receive
+  schema-valid values, so (b) is defensive depth for direct callers.
+- **No silent promotion.** `build_feature_provenance` copies
+  `record.availability_classification` verbatim (None stays None; `derived` stays
+  `derived`). `evaluate_availability_policy` compares with
+  `!= "provider_issued"`, so only an explicitly `provider_issued` value clears
+  production. Missing/unknown classifications cannot become `provider_issued`.
+- **Legacy records / REAL fixtures.** `AcquisitionRecord.availability_classification`
+  is unchanged, optional, default `None`; previously loadable ledgers load
+  identically (existing legacy round-trip test in `test_acquisition_rig.py`).
+  Both committed REAL records and both test fixtures carry `available_utc` with
+  classification `None` — honest, never promoted. Under `research_replay` they
+  extract with output label `None`; under `production` they are rejected.
+- **Serialization retains the classification.** New test proves a
+  `FeatureProvenance` dump → reload round trip preserves `derived` verbatim
+  (and `None` for unclassified), and that a production-policy request keeps its
+  policy across a dump/reload. There is no persistence layer or API response
+  that serializes `FeatureProvenance` today (confirmed by grep), so no other
+  surface can drop the label.
+- **Rejected records cannot contribute.** On gate rejection, `run_extraction`
+  returns every requested feature as `rejected_leakage` with `value=None` and
+  does **not** call `_read_source_features`; no fallback, default-value or
+  alternate extraction path exists (glob + grep over `backend/app`).
+
+### 24.5 Regression tests added (offline)
+
+`backend/tests/test_feature_contract.py` (3 new; nothing rewritten this phase):
+
+- `test_invalid_availability_policy_rejected_at_schema` — fail-closed at the
+  typed boundary for `"PRODUCTION"` and `"prod"`.
+- `test_evaluate_availability_policy_fails_closed_on_unknown_policy` — the gate
+  raises for an unknown policy even with a present timestamp (defensive depth
+  for direct callers).
+- `test_provenance_and_policy_survive_serialization` — classification and policy
+  are retained verbatim across a dump/reload round trip.
+
+Existing Phase 3.7.4B policy-matrix and production `run_extraction` tests are
+the production-entry-point policy-selection coverage (there are no other
+production entry points today); none were modified.
+
+### 24.6 Remaining bypasses and limitations (documented, honest)
+
+- No production-grade wiring exists yet: the demo prediction path consumes
+  DEMO/OpenWeather data, not REAL artifacts. When REAL features are wired to an
+  API/job/training pipeline, that integration MUST set
+  `availability_policy="production"` explicitly; until then the only policy in
+  effect is the `research_replay` default inside `run_extraction`.
+- Production remains blocked on external availability evidence (Q6 CHIRPS, Q7
+  ERA5-Land — §7A/§22) and sufficient verified historical coverage; this phase
+  neither claims nor fabricates that evidence.
+- `evaluate_availability_policy`'s allowlist is a literal tuple
+  (`("research_replay", "production")`); values are compared by equality, never
+  normalized.
+- The older sections' loose "Q6" shorthand (§19.7/§21.9) is not re-labelled;
+  canonical mapping remains Q6 = CHIRPS, Q7 = ERA5-Land (§23.6).
+
+### 24.7 Verification
+
+- Focused:
+  `python -m pytest -o addopts="" tests/test_feature_contract.py tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **181 passed** (3.7.4B: 178; +3).
+- Full backend: `python -m pytest -o addopts=""` → **325 passed** (3.7.4B: 322;
+  +3), 3 benign `sklearn InconsistentVersionWarning` (pre-existing, unchanged).
+- Secret scan: 117 files / 4 `.env` values → 0 hits (unchanged).
+- `git diff --check` → exit 0.
+- Manifest blob/SHA/contract unchanged; feature contract version unchanged;
+  no artifacts or generated files touched (final diff reviewed, files changed
+  listed below).
+
+### 24.8 Files changed this phase
+
+- `backend/app/services/features.py` — `_ALLOWED_AVAILABILITY_POLICIES` + unknown
+  policy fails closed in `evaluate_availability_policy` (~+10 lines).
+- `backend/tests/test_feature_contract.py` — 3 new regression tests (+~50 lines).
+- `docs/historical-data-coverage.md` — this section.
+
+Schema, acquisition, manifest, artifacts, and the rest of the working tree were
+not modified by Phase 3.7.4C on top of the Phase 3.7.4A/3.7.4B delta.
+
+### 24.9 Verdict
+
+Integration is consistent and leak-proof to the extent the architecture reaches:
+`run_extraction` is the only REAL-feature path and it enforces the
+availability-policy gate; no demo API, CLI, job, training or evaluation entry
+point bypasses it, and none exists to wire into tomorrow. Invalid policy values
+fail closed at both the schema and the gate. Missing/unknown classifications are
+never promoted and survive serialization verbatim. Production remains **NO-GO**
+and Q6/Q7 remain `EXTERNAL_EVIDENCE_REQUIRED` — until external availability
+evidence and sufficient verified historical coverage are actually established,
+the production policy can never be satisfied by the current committed records.

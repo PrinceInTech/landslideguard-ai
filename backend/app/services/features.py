@@ -118,6 +118,10 @@ def _require_aware(value: datetime | None, label: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+#: The only valid ``FeatureExtractionRequest.availability_policy`` values.
+_ALLOWED_AVAILABILITY_POLICIES = ("research_replay", "production")
+
+
 def evaluate_leakage(
     observation_start_utc: datetime,
     observation_end_utc: datetime,
@@ -141,6 +145,35 @@ def evaluate_leakage(
     return FeatureStatus.VALID
 
 
+def evaluate_availability_policy(
+    record: AcquisitionRecord,
+    *,
+    availability_policy: str,
+) -> FeatureStatus:
+    """Availability-evidence gate (deterministic; G-4 resolution, §23).
+
+    A prediction cutoff can only be cleared by a timestamp that exists and,
+    under the ``production`` policy, by evidence explicitly classified
+    ``provider_issued``. A derived/unknown/unclassified timestamp therefore
+    never silently clears a production gate, and a missing timestamp can never
+    clear any cutoff -- absent evidence is neither fabricated into a verified
+    timestamp nor treated as provably non-leaky. Returns ``VALID`` or
+    ``REJECTED_LEAKAGE``; the same inputs always return the same status. An
+    unknown policy value fails closed (raises) instead of being read as the
+    permissive research default.
+    """
+    if availability_policy not in _ALLOWED_AVAILABILITY_POLICIES:
+        raise FeatureContractError(
+            f"unknown availability_policy {availability_policy!r}; "
+            f"allowed values: {', '.join(_ALLOWED_AVAILABILITY_POLICIES)}"
+        )
+    if record.available_utc is None:
+        return FeatureStatus.REJECTED_LEAKAGE
+    if availability_policy == "production" and record.availability_classification != "provider_issued":
+        return FeatureStatus.REJECTED_LEAKAGE
+    return FeatureStatus.VALID
+
+
 def _leakage_rejected_note(
     record: AcquisitionRecord, prediction_cutoff_utc: datetime
 ) -> str:
@@ -156,6 +189,21 @@ def _leakage_rejected_note(
             f"prediction_cutoff_utc {prediction_cutoff_utc.isoformat()}"
         )
     return "rejected for leakage: " + "; ".join(reasons)
+
+
+def _availability_policy_rejected_note(
+    record: AcquisitionRecord, availability_policy: str
+) -> str:
+    if record.available_utc is None:
+        return (
+            "rejected for leakage: no availability timestamp is recorded, so the product "
+            "vintage cannot be placed against the prediction cutoff"
+        )
+    return (
+        f"rejected for leakage: availability_policy {availability_policy!r} requires "
+        f"provider_issued evidence, but the record classifies availability as "
+        f"{record.availability_classification!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +437,7 @@ def build_feature_provenance(
         observation_start_utc=record.observation_start_utc,
         observation_end_utc=record.observation_end_utc,
         available_utc=record.available_utc,
+        availability_classification=record.availability_classification,
         retrieved_utc=record.retrieved_utc,
         prediction_cutoff_utc=prediction_cutoff_utc,
         crs=record.crs or CANONICAL_CRS,
@@ -1143,7 +1192,10 @@ def run_extraction(
        provider registry and the file's SHA-256 is recomputed and compared with
        the ledger -- if either fails, extraction aborts;
     6. requested feature names resolve to the source's supported vocabulary;
-    7. leakage gate; a rejection marks every requested feature and returns;
+    7. leakage gates: the time rule (observation window and vintage at or before
+       the cutoff) plus the availability-evidence rule per the request's
+       ``availability_policy`` (production requires ``provider_issued`` evidence,
+       G-4 / §23); a rejection marks every requested feature and returns;
     8. decode (the readers verify artifact geometry before interpreting a
        pixel); nearest-cell sample; build provenance.
     """
@@ -1190,8 +1242,16 @@ def run_extraction(
         record.available_utc,
         request.prediction_cutoff_utc,
     )
+    availability = evaluate_availability_policy(
+        record, availability_policy=request.availability_policy
+    )
     if leakage is FeatureStatus.REJECTED_LEAKAGE:
         note = _leakage_rejected_note(record, request.prediction_cutoff_utc)
+    elif availability is FeatureStatus.REJECTED_LEAKAGE:
+        note = _availability_policy_rejected_note(record, request.availability_policy)
+    else:
+        note = None
+    if note is not None:
         features = [
             _feature(
                 FEATURE_SPECS[name],

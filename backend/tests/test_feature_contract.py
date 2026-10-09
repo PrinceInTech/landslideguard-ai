@@ -26,9 +26,10 @@ from app.schemas.acquisition import (
 from app.schemas.features import (
     CANONICAL_CRS,
     CHIRPS_NODATA,
-    COORDINATE_PRECISION_BY_SOURCE,
+COORDINATE_PRECISION_BY_SOURCE,
     FEATURE_SPECS,
     FeatureExtractionRequest,
+    FeatureProvenance,
     FeatureStatus,
     Position,
     StudyRegion,
@@ -43,8 +44,9 @@ from app.services.features import (
     artifact_path,
     build_feature_provenance,
     chirps_daily_coverage_days,
-    coerce_to_missing,
+coerce_to_missing,
     evaluate_leakage,
+    evaluate_availability_policy,
     require_epsg4326,
     resolve_acquired_record,
     run_extraction,
@@ -205,6 +207,7 @@ def _request(
     features: list[str] | None = None,
     region: StudyRegion | None = None,
     sha: str | None = None,
+    policy: str = "research_replay",
 ) -> FeatureExtractionRequest:
     return FeatureExtractionRequest(
         source=source,
@@ -213,6 +216,7 @@ def _request(
         requested_features=features,
         region=region or StudyRegion(north=29.5, west=88.0, south=21.0, east=97.5, crs=CANONICAL_CRS),
         artifact_sha256=sha,
+        availability_policy=policy,
     )
 
 
@@ -282,6 +286,200 @@ def test_available_after_cutoff_rejected():
         datetime(2026, 9, 5, 0, 0, tzinfo=UTC),
     )
     assert status is FeatureStatus.REJECTED_LEAKAGE
+
+
+def test_production_policy_rejects_unverified_availability():
+    # Phase 3.7.4B resolution of G-4. This supersedes the Phase 3.7.4A pinned
+    # ``test_available_utc_can_be_unclassified_and_gate_is_classification_blind``:
+    # that test pinned the classification-blind behavior (identical outcomes for
+    # derived/unclassified/provider_issued). Under the new one-dimensional policy
+    # rule, a derived or unknown/unclassified timestamp can never clear a
+    # production-grade gate.
+    for classification in ("derived", "unknown", None):
+        record = _chirps_record(availability_classification=classification)
+        assert (
+            evaluate_availability_policy(record, availability_policy="production")
+            is FeatureStatus.REJECTED_LEAKAGE
+        )
+
+
+def test_production_policy_rejects_missing_timestamp():
+    record = _chirps_record(available_utc=None, availability_classification=None)
+    assert record.available_utc is None
+    assert (
+        evaluate_availability_policy(record, availability_policy="production")
+        is FeatureStatus.REJECTED_LEAKAGE
+    )
+
+
+def test_production_policy_accepts_provider_issued_before_cutoff():
+    record = _chirps_record(availability_classification="provider_issued")
+    assert (
+        evaluate_availability_policy(record, availability_policy="production")
+        is FeatureStatus.VALID
+    )
+    # the pure time gate still applies on top of the evidence gate
+    assert evaluate_leakage(
+        record.observation_start_utc,
+        record.observation_end_utc,
+        record.available_utc,
+        datetime(2026, 9, 5, 0, 0, tzinfo=UTC),
+    ) is FeatureStatus.REJECTED_LEAKAGE
+
+
+def test_research_policy_accepts_labelled_availability():
+    # research/replay accepts any present, labelled timestamp -- including the
+    # committed REAL record state (an available_utc with no classification).
+    for classification in ("provider_issued", "derived", "unknown", None):
+        record = _chirps_record(availability_classification=classification)
+        assert (
+            evaluate_availability_policy(record, availability_policy="research_replay")
+            is FeatureStatus.VALID
+        )
+
+
+def test_research_policy_rejects_missing_timestamp():
+    # Supersedes the Phase 3.7.4A pinned
+    # ``test_unknown_availability_is_not_fabricated_and_not_rejected``: absent
+    # availability evidence can no longer clear any cutoff (there is no timestamp
+    # to place against it), and it is still never fabricated into a verified
+    # timestamp -- the record keeps available_utc None.
+    record = _chirps_record(available_utc=None, availability_classification=None)
+    assert record.available_utc is None
+    assert (
+        evaluate_availability_policy(record, availability_policy="research_replay")
+        is FeatureStatus.REJECTED_LEAKAGE
+    )
+
+
+def test_provenance_carries_availability_classification():
+    derived = build_feature_provenance(
+        _chirps_record(availability_classification="derived"),
+        prediction_cutoff_utc=VALID_CUTOFF,
+        transform="direct",
+    )
+    assert derived.availability_classification == "derived"
+    unclassified = build_feature_provenance(
+        _chirps_record(), prediction_cutoff_utc=VALID_CUTOFF, transform="direct"
+    )
+    assert unclassified.available_utc is not None
+    assert unclassified.availability_classification is None
+
+
+def test_run_extraction_default_research_policy_labels_output(raw_root, chirps_decoder):
+    # The committed REAL record state (available_utc, no classification) still
+    # extracts under the default request policy; the output carries the honest
+    # (unclassified) label instead of being presented as provider-issued.
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha, storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz"
+    )
+    assert record.availability_classification is None
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_daily_mm"],
+        ),
+        manifest=_manifest(record),
+        chirps_decoder=chirps_decoder,
+        raw_root=root,
+    )
+    assert all(f.status is FeatureStatus.VALID for f in result.features)
+    assert result.features[0].provenance.availability_classification is None
+
+
+def test_run_extraction_production_gate_rejects_unverified(raw_root, chirps_decoder):
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha,
+        storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz",
+        availability_classification="derived",
+    )
+    result = run_extraction(
+        _request("chirps", Position(latitude=28.0, longitude=90.0), policy="production"),
+        manifest=_manifest(record),
+        chirps_decoder=chirps_decoder,
+        raw_root=root,
+    )
+    assert all(f.status is FeatureStatus.REJECTED_LEAKAGE for f in result.features)
+    assert all("provider_issued" in (f.note or "") for f in result.features)
+
+
+def test_run_extraction_production_gate_accepts_provider_issued(raw_root, chirps_decoder):
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha,
+        storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz",
+        availability_classification="provider_issued",
+    )
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_daily_mm"],
+            policy="production",
+        ),
+        manifest=_manifest(record),
+        chirps_decoder=chirps_decoder,
+        raw_root=root,
+    )
+    assert all(f.status is FeatureStatus.VALID for f in result.features)
+    assert result.features[0].provenance.availability_classification == "provider_issued"
+
+
+def test_invalid_availability_policy_rejected_at_schema():
+    # fail-closed at the typed boundary: a typo / wrong casing is never read as
+    # the permissive research default, it is a validation error.
+    with pytest.raises(ValidationError):
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            policy="PRODUCTION",
+        )
+    with pytest.raises(ValidationError):
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            policy="prod",
+        )
+
+
+def test_evaluate_availability_policy_fails_closed_on_unknown_policy():
+    # fail-closed at the gate even for a direct (schema-bypassed) call with a
+    # present timestamp: an unknown policy raises instead of being treated as
+    # research_replay.
+    record = _chirps_record()  # available_utc present
+    assert record.available_utc is not None
+    with pytest.raises(FeatureContractError):
+        evaluate_availability_policy(record, availability_policy="bogus")
+
+
+def test_provenance_and_policy_survive_serialization():
+    # Persisted provenance and request policy must retain the actual
+    # classification / policy verbatim through a dump/reload round trip --
+    # a derived label can never be lost (and thereby silently promoted) on
+    # serialization.
+    record = _chirps_record(availability_classification="derived")
+    provenance = build_feature_provenance(
+        record, prediction_cutoff_utc=VALID_CUTOFF, transform="direct"
+    )
+    loaded = FeatureProvenance.model_validate(provenance.model_dump())
+    assert loaded.availability_classification == "derived"
+    assert loaded.model_dump_json() == provenance.model_dump_json()
+    unclassified = build_feature_provenance(
+        _chirps_record(), prediction_cutoff_utc=VALID_CUTOFF, transform="direct"
+    )
+    assert FeatureProvenance.model_validate(
+        unclassified.model_dump()
+    ).availability_classification is None
+    req = _request(
+        "chirps", Position(latitude=28.0, longitude=90.0), policy="production"
+    )
+    assert (
+        FeatureExtractionRequest.model_validate(req.model_dump()).availability_policy
+        == "production"
+    )
 
 
 # ---------------------------------------------------------------------------

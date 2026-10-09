@@ -61,6 +61,7 @@ Statuses distinguish an honest value from every kind of gap: ``valid``,
 """
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
@@ -149,6 +150,17 @@ class FeatureStatus(str, Enum):
     INSUFFICIENT_TEMPORAL_COVERAGE = "insufficient_temporal_coverage"
     REJECTED_LEAKAGE = "rejected_leakage"
     INVALID_SOURCE_ARTIFACT = "invalid_source_artifact"
+
+
+#: Explicit nature of the ``available_utc`` evidence a feature can rely on.
+#: Mirrors ``AcquisitionRecord.availability_classification`` (acquisition.py:169);
+#: ``None`` means the record carried no classification (unverified / unknown).
+AvailabilityClassification = Literal["provider_issued", "derived", "unknown"]
+
+#: How strictly availability evidence must clear the leakage gate (G-4, §23).
+#: ``research_replay`` accepts any present, labelled timestamp; ``production``
+#: accepts only ``provider_issued`` evidence. A missing timestamp clears neither.
+AvailabilityPolicy = Literal["research_replay", "production"]
 
 
 class Position(BaseModel):
@@ -355,6 +367,12 @@ class FeatureProvenance(BaseModel):
     observation_start_utc: AwareDatetime
     observation_end_utc: AwareDatetime
     available_utc: AwareDatetime | None = None
+    availability_classification: AvailabilityClassification | None = Field(
+        default=None,
+        description="Nature of the available_utc evidence, copied verbatim from the "
+        "acquisition record; a derived/unknown/unclassified timestamp is never "
+        "presented as provider-issued.",
+    )
     retrieved_utc: AwareDatetime | None = None
     prediction_cutoff_utc: AwareDatetime
     crs: str = Field(default=CANONICAL_CRS)
@@ -409,6 +427,12 @@ class FeatureExtractionRequest(BaseModel):
     requested_features: list[str] | None = Field(
         default=None,
         description="Feature names to produce; None selects every feature supported for the source.",
+    )
+    availability_policy: AvailabilityPolicy = Field(
+        default="research_replay",
+        description="How strictly the record's availability evidence must clear the leakage "
+        "gate (G-4, §23): research_replay accepts any present labelled timestamp; production "
+        "accepts only provider_issued evidence. A missing timestamp clears neither policy.",
     )
 
     @field_validator("artifact_sha256")
