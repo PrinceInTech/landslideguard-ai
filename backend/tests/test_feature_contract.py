@@ -249,12 +249,15 @@ def test_naive_datetime_rejected():
         _request("chirps", Position(latitude=28.0, longitude=90.0), cutoff=datetime(2026, 10, 8, 12, 0))
 
 
-def test_observation_after_cutoff_rejected():
-    record = _chirps_record()
+def test_observation_after_cutoff_rejected(raw_root):
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha, storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz"
+    )
     result = run_extraction(
         _request("chirps", Position(latitude=28.0, longitude=90.0), cutoff=datetime(2026, 8, 31, 0, 0, tzinfo=UTC)),
         manifest=_manifest(record),
-        raw_root=None,
+        raw_root=root,
     )
     assert all(f.status is FeatureStatus.REJECTED_LEAKAGE for f in result.features)
 

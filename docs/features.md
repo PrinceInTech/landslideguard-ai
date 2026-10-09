@@ -1,4 +1,4 @@
-# REAL Data Feature Extraction Contract (Phase 3.7.1)
+# REAL Data Feature Extraction Contract (Phase 3.7.1–3.7.2)
 
 **Contract + foundation only.** This phase defines how the currently acquired
 REAL artifacts become typed, leakage-safe ML-ready features. It does **not**
@@ -11,7 +11,8 @@ untouched.
 
 Code: contract in `backend/app/schemas/features.py`, extraction service in
 `backend/app/services/features.py`, tests in
-`backend/tests/test_feature_contract.py`.
+`backend/tests/test_feature_contract.py` (contract) and
+`backend/tests/test_feature_real_artifacts.py` (Phase 3.7.2 readers).
 
 ## Supported REAL sources (as acquired)
 
@@ -161,13 +162,53 @@ files — which this phase deliberately does not acquire.
 
 ## Reading artifacts (decoders)
 
-- ERA5-Land NetCDF: decoded with `netCDF4` (imported lazily; optional at
-  import time). `_FillValue` → `NaN` → `missing`.
-- CHIRPS GeoTIFF: decoding is backend-gated (`rasterio`). The contract's CHIRPS
-  extraction is proven with bounded fixture grids that mirror the real
-  artifact's documented geometry (0.05°, `-9999` fill) plus the artifact's
-  checksum/identity against the real file — tests never download data, and the
-  suite works on machines without a raster backend.
+- **CHIRPS GeoTIFF (`.tif.gz`)** — decoded by a **built-in pure-Python reader**
+  (`gzip` + `struct`): it parses the TIFF IFD, requires the contracted geometry
+  (7200 × 2000, ModelPixelScale 0.05°, tiepoint −180/50, GeoKey EPSG:4326,
+  uncompressed 32-bit float, one sample/pixel, strip layout), reads the
+  **study-window strips only** (memory-safe: one 191-pixel row at a time), and
+  reports the contracted `-9999` fill. No `rasterio`, `tifffile`, or Pillow
+  dependency is added.
+- **ERA5-Land NetCDF** — decoded with `netCDF4` (imported lazily; optional at
+  import time). Axis spacing, count, extent, and units are verified before any
+  value is read; `_FillValue`/`NaN` → `missing`.
+
+## Phase 3.7.2 — real artifact pixel extraction
+
+Phase 3.7.1 proved the contract with synthetic fixtures; 3.7.2 makes it read the
+actual on-disk artifacts and pins the real values. **No new dependency** is
+introduced.
+
+**Decode order is identity-before-leakage.** `run_extraction` resolves the
+ledger record, re-verifies product/version compatibility and the artifact
+SHA-256, and only then maps feature names, applies the leakage gate, decodes,
+and samples. A tampered or mismatched artifact aborts with
+`invalid_source_artifact` before any leakage decision is exposed.
+
+**CHIRPS reader.** `read_chirps_grid(path, *, region=None)` parses the header,
+verifies the full contracted geometry (rejecting BigTIFF, wrong dimensions,
+pixel scale, tiepoint, CRS, bits/sample-format, compression, samples/pixel, and
+truncated strips), computes the region's window with half-cell pixel centres
+using the artifact's real float32 pixel scale, and reads only those strips.
+
+**ERA5 reader.** `read_era5_land_variables(path, *, region=None)` verifies the
+86 × 96 axes (descending latitude, ascending longitude, 0.1° spacing) and the
+exact units (`t2m` K, `tp` m, `swvl1` `m**3 m**-3`, `sro` m), then reads the four
+variables on the region's window.
+
+**Real-artifact spot checks** (hardcoded in tests, from the committed ledger
+files): CHIRPS window N 29.5/W 88.0/S 21.0/E 97.5 = 171 × 191, ~4.58% fill,
+mean ≈ 19.1763, median ≈ 13.4128, max ≈ 186.0284; e.g. (28.02, 90.03) ≈
+6.0442 mm and (24.0, 95.0) ≈ 10.4295 mm; a `-9999` cell → `missing`, a
+measured `0.0` cell → valid `0.0`. ERA5 at (26.0, 94.0): `t2m` ≈ 298.8933 K,
+`tp` ≈ 0.011356 m, `swvl1` ≈ 0.4433, `sro` ≈ 0.0004792 m; a NaN cell →
+`missing`.
+
+**Limitations (unchanged from 3.7.1).** Only one daily CHIRPS file and one
+ERA5-Land valid time exist, so 3d/7d/14d/30d accumulations stay
+`insufficient_temporal_coverage`; this is still a contract + reader, not a
+training dataset. Readers only ever open artifacts read-only; tests assert the
+real files' bytes are untouched.
 
 ## Tests
 
@@ -187,10 +228,23 @@ default), and skip-guarded tests read the actual artifact headers (GeoTIFF
 claim can never silently drift. Real-artifact checks are
 skip-guarded on local file presence (nothing is downloaded).
 
-## Boundaries (Phase 3.7.1)
+`backend/tests/test_feature_real_artifacts.py` (Phase 3.7.2) adds the real
+readers: the pure-Python CHIRPS GeoTIFF reader (real-window values, and
+parametrized rejection of every geometry deviation — dimensions, pixel scale,
+origin, CRS, bits, sample-format, compression, samples/pixel, nodata; plus
+non-TIFF, BigTIFF, and truncated-strip inputs), the ERA5 axis/units/region
+verification (with a crafted in-memory NetCDF missing a variable), the
+identity checks (product mismatch, version mismatch — with the ledger's
+`v2.0`/registry `v2.x` wildcard, checksum-before-leakage, non-REAL kind), and
+end-to-end extraction over the real artifacts including the leakage gate and a
+no-mutation assertion on the source bytes.
+
+## Boundaries (Phase 3.7.1–3.7.2)
 
 - No model training, no accuracy claims, no new acquisitions, no IMERG/COOLR
-  retries, no frontend/UI changes, no changes to the DEMO prediction path.
+  retries, no frontend/UI changes, no changes to the DEMO prediction path, and
+  no new runtime dependency (CHIRPS uses the standard library; ERA5-Land keeps
+  the already-established optional `netCDF4` import).
 - Feature extraction is not wired into any API route; it is a contract +
-  foundation for a later phase that will build a genuine training table over
-  many acquisition days.
+  real-artifact reader foundation for a later phase that will build a genuine
+  training table over many acquisition days.

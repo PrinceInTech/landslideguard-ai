@@ -1,9 +1,12 @@
-"""REAL-data feature extraction contract (Phase 3.7.1).
+"""REAL-data feature extraction contract (Phase 3.7.1, artifact geometry 3.7.2).
 
 CONTRACT + FOUNDATION ONLY. This module defines the typed, leakage-safe
 contract for converting the currently acquired REAL artifacts (CHIRPS daily
 precipitation, ERA5-Land hourly 2m_temperature / total_precipitation /
 volumetric_soil_water_layer_1 / surface_runoff) into ML-ready features.
+Phase 3.7.2 adds the verified geometry constants that the real-artifact
+readers must check before they interpret any pixel; the contract version
+stays 1.0.0 (all additions are additive).
 
 Nothing here is wired into the DEMO prediction path, the ML model, any API
 route, or the UI. No model is trained and no real-world accuracy is claimed.
@@ -87,6 +90,43 @@ CHIRPS_ROLLING_WINDOW_DAYS = (3, 7, 14, 30)
 #: "0.1 degrees, hourly"). It is NOT the source resolution; a source without a
 #: verified precision must raise rather than silently default.
 COORDINATE_PRECISION_BY_SOURCE = {"chirps": 0.025, "era5-land": 0.05}
+
+# ---------------------------------------------------------------------------
+# Verified artifact geometry (Phase 3.7.2, additive; contract stays 1.0.0).
+# These values were read from the acquired artifacts themselves (GeoTIFF
+# ModelPixelScale/tiepoint/GeoKeys, NetCDF axes). A reader must refuse any
+# file whose header deviates from these values BEFORE interpreting a pixel.
+# ---------------------------------------------------------------------------
+
+#: CHIRPS GeoTIFF raster geometry (global grid covering -180..180 / -50..50).
+CHIRPS_RASTER_WIDTH = 7200
+CHIRPS_RASTER_HEIGHT = 2000
+CHIRPS_PIXEL_SIZE = 0.05
+CHIRPS_ORIGIN_LON = -180.0
+CHIRPS_ORIGIN_LAT = 50.0
+
+#: CHIRPS GeoTIFF encoding: float32 single-band, no compression. Any other
+#: encoding is refused rather than guessed at.
+CHIRPS_BITS_PER_SAMPLE = 32
+CHIRPS_SAMPLES_PER_PIXEL = 1
+CHIRPS_SAMPLE_FORMAT_IEEEFP = 3
+CHIRPS_COMPRESSION_NONE = 1
+
+#: ERA5-Land NetCDF grid: 0.1 deg spacing over the study region yields
+#: (N-S)/0.1 + 1 = 86 latitudes and (E-W)/0.1 + 1 = 96 longitudes.
+ERA5_GRID_SPACING = 0.1
+ERA5_LATITUDE_COUNT = 86
+ERA5_LONGITUDE_COUNT = 96
+
+#: Expected ``units`` attribute of every supported ERA5-Land variable, read
+#: from the artifact. Values are never interpreted when the file declares
+#: anything else (no silent unit conversion, no unit guessing).
+ERA5_LAND_UNITS = {
+    "t2m": "K",
+    "tp": "m",
+    "swvl1": "m**3 m**-3",
+    "sro": "m",
+}
 
 
 class FeatureKind(str, Enum):
