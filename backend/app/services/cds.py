@@ -17,9 +17,12 @@ Authentication: the Personal Access Token is sent as the PRIVATE-TOKEN header
 (as declared in the public OpenAPI at ``{base}/retrieve/v1/openapi.json``).
 """
 
+import posixpath
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import unquote, urljoin, urlsplit
 
 import requests
 
@@ -27,6 +30,54 @@ import requests
 TERMINAL_STATUSES = frozenset({"successful", "failed", "dismissed", "aborted", "cancelled"})
 #: The only status that yields a downloadable artifact.
 SUCCESS_STATUS = "successful"
+
+#: GET status codes treated as redirects by the manual artifact-download loop.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+#: Bound on redirect hops followed for one artifact download.
+_MAX_REDIRECTS = 10
+#: Default ports, used when a URL omits an explicit port.
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _header_lookup(headers, name: str):
+    """Case-insensitive header lookup that also tolerates plain dicts."""
+    if not headers:
+        return None
+    try:
+        value = headers.get(name)
+    except AttributeError:
+        return None
+    if value is not None:
+        return value
+    lowered = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lowered:
+            return value
+    return None
+
+
+def _normalized_path(path: str | None) -> str | None:
+    """Normalize a URL path for the trusted-origin path check.
+
+    Returns ``None`` when the path cannot be trusted: an encoded path separator
+    (``%2f``/``%5c``) may be decoded to ``/`` by a server and is rejected, as is
+    any path whose dot segments resolve outside the configured base once
+    percent-escapes are decoded. Literal ``.``/``..`` segments are collapsed so
+    a crafted path cannot masquerade as sitting under the base while resolving
+    elsewhere.
+    """
+    raw = path or "/"
+    lowered = raw.lower()
+    if "%2f" in lowered or "%5c" in lowered:
+        return None
+    decoded = unquote(raw)
+    trailing = decoded.endswith("/")
+    normalized = posixpath.normpath(decoded)
+    if normalized == ".":
+        normalized = "/"
+    if trailing and not normalized.endswith("/"):
+        normalized += "/"
+    return normalized
 
 
 class CdsError(Exception):
@@ -58,6 +109,23 @@ class CdsTimeout(CdsError):
 
 class CdsMalformedResponse(CdsError):
     """A response was parseable JSON but structurally wrong."""
+
+
+@dataclass(frozen=True)
+class CdsDownloadResult:
+    """Outcome of one artifact download, including HTTP evidence.
+
+    ``headers`` are the raw final-response headers (message casing preserved);
+    the acquisition rig keeps only the allowlisted subset. ``final_url`` and
+    ``redirect_chain`` are raw here and must be redacted before they reach the
+    ledger. ``content`` is the artifact bytes, returned unmodified.
+    """
+
+    content: bytes
+    status_code: int
+    headers: dict[str, str]
+    final_url: str
+    redirect_chain: tuple[str, ...] = ()
 
 
 def provider_sha256(asset: dict) -> str | None:
@@ -100,7 +168,22 @@ class CdsTransport:
         poll_interval_seconds: int = 5,
         max_wait_seconds: int = 1800,
     ):
+        try:
+            parts = urlsplit(api_url)
+            port = parts.port
+        except ValueError as exc:
+            raise CdsError(f"CDS API URL is not a valid URL: {api_url!r}") from exc
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+        if scheme != "https" or not host:
+            raise CdsError(
+                f"CDS API URL must be an https URL with a host: {api_url!r}"
+            )
         self._base = api_url.rstrip("/") + "/retrieve/v1"
+        self._api_scheme = scheme
+        self._api_host = host
+        self._api_port = port if port is not None else _DEFAULT_PORTS.get(scheme)
+        self._trusted_path = (_normalized_path(parts.path) or "/").rstrip("/")
         self._api_key = api_key
         self.timeout = timeout
         self.poll_interval_seconds = poll_interval_seconds
@@ -109,14 +192,71 @@ class CdsTransport:
     def _headers(self, accept: str = "application/json") -> dict:
         return {"PRIVATE-TOKEN": self._api_key, "Accept": accept}
 
+    def _in_trusted_path(self, path: str | None) -> bool:
+        """True when a normalized ``path`` is at or below the API base path."""
+        if path is None:
+            return False
+        base = self._trusted_path
+        if not base:
+            return True
+        return path == base or path.startswith(base + "/")
+
+    def _is_trusted_url(self, url: str) -> bool:
+        """True only for an https URL on the configured CDS API origin.
+
+        A URL is trusted only when its scheme, host and effective port exactly
+        match the configured API URL *and* its path (percent-decoded and
+        dot-segment-normalized) sits at or below the configured API base path.
+        A same-host URL on a different port, an unrelated or ``..``-escaped
+        path, an encoded path separator, or a plaintext ``http`` downgrade is
+        not trusted and never receives the token. Userinfo is handled by
+        ``urlsplit`` (hostname excludes it); a malformed URL or port is
+        rejected rather than raising.
+        """
+        try:
+            parts = urlsplit(url)
+            port = parts.port
+        except ValueError:
+            return False
+        scheme = (parts.scheme or "").lower()
+        if scheme != "https" or scheme != self._api_scheme:
+            return False
+        if not self._api_host or (parts.hostname or "").lower() != self._api_host:
+            return False
+        effective_port = port if port is not None else _DEFAULT_PORTS.get(scheme)
+        if effective_port != self._api_port:
+            return False
+        return self._in_trusted_path(_normalized_path(parts.path))
+
+    def _download_headers(self, url: str) -> dict:
+        """Headers for an artifact GET, scoped to the trusted CDS API origin.
+
+        The Personal Access Token authenticates the CDS control plane. Artifact
+        hrefs commonly point at a pre-signed third-party CDN host, so the token
+        is attached only when the URL matches the trusted origin (https, exact
+        host+port, path at/below the configured API base); otherwise only the
+        minimum ``Accept`` header is sent. The token is never sent to an
+        unverified external host, an http downgrade, or an off-path URL.
+        """
+        headers = {"Accept": "*/*"}
+        if self._is_trusted_url(url):
+            headers["PRIVATE-TOKEN"] = self._api_key
+        return headers
+
     def submit(self, process_id: str, inputs: dict) -> str:
-        """Submit an execution and return its job id (201 -> jobID)."""
+        """Submit an execution and return its job id (201 -> jobID).
+
+        Redirects are rejected explicitly: the documented CDS endpoint issues
+        none, and following one could forward ``PRIVATE-TOKEN`` to another
+        origin (``requests`` strips only ``Authorization`` on a host change).
+        """
         url = f"{self._base}/processes/{process_id}/execution"
         response = requests.post(
             url,
             headers=self._headers(),
             json={"inputs": dict(inputs), "response": "raw"},
             timeout=self.timeout,
+            allow_redirects=False,
         )
         if response.status_code == 401:
             raise CdsAuthenticationError("CDS rejected the Personal Access Token (HTTP 401)")
@@ -134,9 +274,15 @@ class CdsTransport:
         return job_id
 
     def poll(self, job_id: str) -> tuple[str, str | None]:
-        """Return ``(status, message)`` for one job."""
+        """Return ``(status, message)`` for one job.
+
+        Redirects are rejected explicitly (see :meth:`submit`).
+        """
         response = requests.get(
-            f"{self._base}/jobs/{job_id}", headers=self._headers(), timeout=self.timeout
+            f"{self._base}/jobs/{job_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+            allow_redirects=False,
         )
         if response.status_code != 200:
             raise CdsApiError(
@@ -153,9 +299,15 @@ class CdsTransport:
         return status, (message if isinstance(message, str) else None)
 
     def results(self, job_id: str) -> list[dict]:
-        """Return the downloadable asset descriptors of a finished job."""
+        """Return the downloadable asset descriptors of a finished job.
+
+        Redirects are rejected explicitly (see :meth:`submit`).
+        """
         response = requests.get(
-            f"{self._base}/jobs/{job_id}/results", headers=self._headers(), timeout=self.timeout
+            f"{self._base}/jobs/{job_id}/results",
+            headers=self._headers(),
+            timeout=self.timeout,
+            allow_redirects=False,
         )
         if response.status_code != 200:
             raise CdsApiError(
@@ -180,9 +332,45 @@ class CdsTransport:
                 yield from CdsTransport._iter_assets(item)
 
     def download(self, url: str, headers: dict | None = None) -> bytes:
-        response = requests.get(url, headers=headers or self._headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.content
+        """Download an artifact and return its bytes (backward-compatible)."""
+        return self.download_with_evidence(url, headers).content
+
+    def download_with_evidence(
+        self, url: str, headers: dict | None = None
+    ) -> CdsDownloadResult:
+        """Download an artifact, returning bytes plus HTTP evidence.
+
+        Redirects are followed manually so the token is re-scoped on every hop:
+        a redirect that leaves the trusted origin (external host, http
+        downgrade, different port or off-path URL) drops the ``PRIVATE-TOKEN``
+        header and can never carry the credential outwards. Bytes are returned
+        exactly as received (never transformed). When ``headers`` is supplied it
+        is used verbatim for every hop (caller-owned).
+        """
+        current = url
+        history: list[str] = []
+        for _ in range(_MAX_REDIRECTS + 1):
+            request_headers = headers if headers is not None else self._download_headers(current)
+            response = requests.get(
+                current,
+                headers=request_headers,
+                timeout=self.timeout,
+                allow_redirects=False,
+            )
+            location = _header_lookup(getattr(response, "headers", None), "location")
+            if response.status_code in _REDIRECT_STATUSES and location:
+                history.append(current)
+                current = urljoin(current, location)
+                continue
+            response.raise_for_status()
+            return CdsDownloadResult(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                final_url=current,
+                redirect_chain=tuple(history),
+            )
+        raise CdsApiError(f"CDS artifact download exceeded {_MAX_REDIRECTS} redirects")
 
     def wait_for_success(self, job_id: str) -> tuple[str, str | None]:
         """Poll until terminal; return ``(status, message)`` on success.

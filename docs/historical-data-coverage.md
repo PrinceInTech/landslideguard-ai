@@ -1309,3 +1309,388 @@ No caller imports the removed private helpers.
 R-3 is fixed and verified. Q6 remains `EXTERNAL_EVIDENCE_REQUIRED`; historical
 acquisition remains `READY_FOR_ACQUISITION_PLANNING`; temporal feature computation
 remains `NEEDS_EVIDENCE`; production remains `NO-GO`.
+
+---
+
+## 19. Phase 3.7.3C.2 — Safe CDS/ERA5-Land download evidence capture
+
+### 19.1 Scope and design baseline
+
+Implements the C.1 design baseline for closing the M-2 CDS artifact-download
+evidence gap and fixes the credential-boundary finding it raised. No real-data
+acquisition, no external network request, no manifest edit, no contract-version
+change. Starting checkpoint HEAD `da21f81` with a clean working tree.
+
+Changed files:
+
+- `backend/app/services/cds.py` — new `CdsDownloadResult`; host-scoped download
+  headers; new `download_with_evidence`; `download` now delegates (bytes API
+  preserved).
+- `backend/app/services/acquisition.py` — `acquire_cds` records redacted
+  artifact-download evidence on success and (when a response is attached) on
+  download failure.
+- `backend/app/redaction.py` — `jwt` added to sensitive query/key detection.
+- `backend/tests/test_cds_acquisition.py` — enriched fakes plus 12 new tests.
+
+`backend/app/schemas/acquisition.py` was **not** changed: the Phase 3.7.3B.3
+evidence fields are already additive/optional, so CDS records simply begin
+populating them.
+
+### 19.2 Credential-boundary finding and fix
+
+**Finding (C.1):** `CdsTransport.download` sent `self._headers()` by default,
+i.e. the CDS Personal Access Token (`PRIVATE-TOKEN`) was forwarded to the
+artifact `href` host, which is commonly a pre-signed third-party CDN and is not
+an authorized CDS API origin.
+
+**Fix:** `CdsTransport._download_headers(url)` now compares the asset URL's
+hostname (case-insensitive) with the configured CDS API hostname
+(`urlsplit(api_url).hostname`) and forwards `PRIVATE-TOKEN` **only** when they
+match; otherwise it sends just `Accept: */*`. The control plane (`submit`,
+`poll`, `results`) still uses `_headers()` and therefore still authenticates.
+No network call is made to verify domains, and a malformed/empty host is treated
+as external (token withheld). Tests prove the token is absent from the external
+host request and still present on control-plane and same-origin requests.
+
+### 19.3 Implementation
+
+- `CdsDownloadResult` (frozen) carries `content`, `status_code`, `headers`,
+  `final_url`, `redirect_chain`. Bytes are returned unmodified.
+- `CdsTransport.download_with_evidence(url, headers=None)` uses the existing
+  single `requests.get` flow, calls `raise_for_status()`, and returns the result
+  with `response.url` / `response.history`. `CdsTransport.download` returns
+  `download_with_evidence(...).content`, preserving its public bytes contract.
+- `AcquisitionDriver.acquire_cds` redacts `asset["href"]` once
+  (`request_url`, `request_redactions`), downloads with evidence, then records:
+  `request_url` (redacted), `request_method="GET"`, `http_status`,
+  `response_headers` (allowlist only via `_allowlisted_headers`), `final_url`
+  (redacted), `redirect_chain` (redacted via `_redact_chain`), minimal
+  string-valued `provider_metadata` (`dataset`, `job_id`, and `asset_type` when
+  present), and merged `redacted_params`.
+- Download-failure path: `request_url` + `request_method` are always recorded,
+  but `http_status`/`response_headers` are recorded **only** when the exception
+  carries a real `.response`; no status/header/redirect value is ever fabricated.
+- `available_utc` is never derived from `Date`, `Last-Modified`, filesystem time
+  or retrieval time; those headers are stored only as response evidence, and
+  `availability_classification` stays unset unless the caller supplies it.
+
+### 19.4 Redaction
+
+`jwt` is now in `SENSITIVE_KEY_SUBSTRINGS`, `_SENSITIVE_QUERY_RE` and
+`_KV_IN_TEXT_RE`, so `token`, `jwt`, `sig` and `X-Amz-Signature` (which already
+matched `signature`) are redacted from request/final URLs, redirect hops,
+provider metadata and serialized records. Authorization/cookie headers remain
+outside the persisted allowlist, and CDS exception text still passes through
+`_sanitize_error` → `redact_text`. The R-1/R-2/R-3 redaction tests were not
+weakened; all remain green.
+
+### 19.5 Test matrix and results
+
+Twelve new offline tests (fake transports, fake responses, monkeypatched
+`requests.get` only):
+
+1. `download_with_evidence` returns content plus status/headers/final URL/redirect chain.
+2. `download()` backward-compatible bytes (`test_download_returns_bytes`, kept).
+3. `acquire_cds` records full artifact-download evidence.
+4. External-host token isolation (no `PRIVATE-TOKEN`), and same-origin token retention.
+5. Control plane still authenticated.
+6. Signed URL/redirect redaction (`token`/`jwt`/`sig`/`X-Amz-Signature`/`X-Amz-Credential` absent from the serialized manifest).
+7. Download HTTP failure: failed record, sanitized error, no artifact written.
+8. Download failure with a response object records status + allowlisted headers only.
+9. CDS control-plane exception text sanitized.
+10. Manifest contract version stays `1.1.0`.
+11. `Date`/`Last-Modified` captured only as evidence; `available_utc` stays `None`.
+12. Artifact bytes/SHA-256/byte count identical.
+
+Results:
+
+- `python -m pytest tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **95 passed** (was 83).
+- `python -m pytest` → **279 passed**, 3 benign sklearn `InconsistentVersionWarning` (was 267).
+- Secret scan → 117 files vs 4 `.env` values, **hits=0**.
+- `git diff --check` → exit 0.
+
+### 19.6 Manifest integrity and contract
+
+- `data/provenance/acquisition_manifest.json` unchanged: git blob
+  `07dc2cdd36fa6772b74dcf6a7a96706d99eb593c`; content SHA-256
+  `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`.
+- `contract_version` remains `1.1.0`; no bump was necessary because all evidence
+  fields were already optional and legacy records load unchanged.
+- HEAD remains `da21f81`; nothing staged, committed or pushed.
+
+### 19.7 Residual risks
+
+- **M-2 status:** the code-level gap M-2 identified (CDS records no
+  `request_url`/`http_status`/`response_headers`/`final_url`/`redirect_chain`;
+  `download` returns bytes only) is now **closed and test-verified**. ERA5-Land
+  is still **not** claimed evidence-complete: publication/availability evidence
+  depends on provider semantics that no HTTP header supplies (Q6), so the
+  external-evidence blocker stands.
+- Credential boundary: the PAT is withheld from external hosts, but a same-host
+  artifact URL still receives it (treated as the configured API origin). If the
+  CDS API and its CDN ever share a host, that co-location would need
+  re-verification.
+- Value-agnostic redaction limits are unchanged: a secret embedded as a URL
+  *path* segment, an unrecognized query name (not matching the sensitive
+  substrings), or more than four nested percent-encodings can still survive.
+- `provider_metadata` for CDS is limited to non-secret identifiers; the signed
+  asset `href` is never stored.
+
+### 19.8 Verdict
+
+The credential-boundary defect is fixed and the CDS artifact-download evidence
+gap is implemented and verified. Q6 remains `EXTERNAL_EVIDENCE_REQUIRED`;
+historical acquisition remains `READY_FOR_ACQUISITION_PLANNING`; temporal feature
+computation remains `NEEDS_EVIDENCE`; production remains `NO-GO`.
+
+---
+
+## 20. Phase 3.7.3C.3 — Final CDS credential boundary audit
+
+### 20.1 Scope and method
+
+Independent audit of the uncommitted C.2 changes, on the assumption that passing
+tests alone do not prove safety. The full implementations of `_download_headers`,
+`download_with_evidence`, `download`, the CDS redirect path and `acquire_cds`
+were read; the credential boundary was re-derived from first principles rather
+than trusted. No real network request or real credential was used.
+
+### 20.2 Findings (hostname-only matching was insufficient)
+
+The C.2 policy attached the Personal Access Token (PAT) whenever
+`urlsplit(url).hostname == api_hostname`. Three gaps were found:
+
+- **F-1 (High) — scheme ignored (HTTPS→HTTP downgrade).** A same-host URL on
+  `http://` matched and received the PAT, sending the credential in plaintext.
+- **F-2 (High) — redirects could forward the PAT off-origin.** `requests` follows
+  redirects by default and (unlike `Authorization`) does **not** strip a custom
+  `PRIVATE-TOKEN` header on a cross-host redirect. A trusted-origin download that
+  redirected to an external host would therefore leak the PAT to that host.
+- **F-3 (Medium) — port and path ignored.** Any URL on the API hostname, on any
+  port or path (e.g. `:8443`, `/other`), received the PAT; same-hostname was
+  treated as enough justification on its own.
+
+### 20.3 Implemented policy (strict trusted origin + safe redirects)
+
+Documented behavior change (from C.2's hostname-only rule, per §19.7) to a strict
+trusted-origin policy. A download URL receives the PAT only when **all** hold:
+
+- scheme is `https` and equals the configured API scheme;
+- hostname equals the configured API hostname;
+- effective port equals the configured API port (default 443/80 when omitted);
+- path is at or below the configured API base path (`api_url` path; whole host
+  when the configured base path is empty).
+
+In addition, `download_with_evidence` now follows redirects **manually**
+(`allow_redirects=False`, bounded to 10 hops), recomputing `_download_headers`
+on every hop. A redirect that leaves the trusted origin (external host, http
+downgrade, different port, off-path URL) therefore drops the PAT and cannot
+carry it outwards. Redirect-hop URLs are still captured (for redacted evidence)
+and `download()` still returns the original bytes unchanged. Control-plane
+`submit`/`poll`/`results` continue to authenticate unchanged.
+
+### 20.4 Tests added (offline, fake responses only)
+
+- `download_with_evidence` follows a redirect and captures content, status,
+  headers, final URL and ordered redirect chain.
+- PAT is absent for a different hostname; present within the trusted origin.
+- PAT is absent for an off-path same-host URL, a different port, and an
+  `http://` downgrade (F-1/F-3 regressions).
+- A trusted-origin download redirecting to an external host does **not** forward
+  the PAT on the second hop; every hop is issued with `allow_redirects=False`
+  (F-2 regression).
+- A redirect loop beyond the bound raises `CdsApiError`.
+- Control plane still sends the token.
+
+### 20.5 Evidence and redaction re-verification
+
+Re-confirmed from the C.2 implementation: `request_url`/`final_url`/redirect hops
+are redacted via `redact_url`/`_redact_chain` before persistence; response
+headers are allowlisted (`last-modified`/`etag`/`date`) and bounded; PAT, cookies
+and `Authorization` are never persisted; exceptions pass through
+`_sanitize_error`; `http_status`/`response_headers` are recorded on failure only
+when a real `.response` exists; `Date`/`Last-Modified` are evidence only and
+never populate `available_utc`; `download()` returns the unmodified bytes; the
+contract remains `1.1.0`; artifact content, SHA-256 and byte count are
+unchanged; the manifest is untouched.
+
+### 20.6 Verification (from `backend/`)
+
+- `python -m pytest tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **100 passed**.
+- `python -m pytest` → **284 passed**, 3 benign sklearn `InconsistentVersionWarning`.
+- Secret scan → 117 files vs 4 `.env` values, **hits=0**.
+- `git diff --check` → exit 0.
+
+### 20.7 Residual risks
+
+- **Control-plane redirects** (`submit`/`poll`/`results`) still use default
+  redirect following. Those URLs are constructed from the configured trusted
+  base, so an external redirect would require the CDS API host itself to
+  misbehave; the PAT could then be re-sent because `requests` does not strip
+  `PRIVATE-TOKEN`. Left unchanged as out of scope for the asset-download
+  boundary and documented here.
+- Value-agnostic redaction limits are unchanged: a secret embedded as a URL
+  **path** segment, under an **unrecognized** query name, or behind more than
+  four nested percent-encodings may remain undetectable. No claim of arbitrary
+  secret detection is made.
+- If the configured API base path is empty, the whole hostname is treated as the
+  trusted origin (the configured origin genuinely is that host).
+- M-2's code-level evidence gap remains closed; ERA5-Land is still **not**
+  claimed evidence-complete.
+
+### 20.8 Verdict
+
+The C.2 hostname-only credential boundary was insufficient; the strict
+trusted-origin policy plus manual per-hop redirect scoping closes F-1/F-2/F-3
+and is test-verified. Q6 remains `EXTERNAL_EVIDENCE_REQUIRED`; historical
+acquisition remains `READY_FOR_ACQUISITION_PLANNING`; temporal feature computation
+remains `NEEDS_EVIDENCE`; production remains `NO-GO`.
+
+---
+
+## 21. Phase 3.7.3C.4 — Final redirect and trusted-origin audit
+
+### 21.1 Scope and method
+
+Continuing audit of the uncommitted C.2/C.3 changes on the assumption that a
+passing suite does not prove every security boundary. The C.3 work scoped
+`PRIVATE-TOKEN` to a strict trusted origin for **artifact downloads** only; the
+C.4 audit re-derived the control plane (`submit`/`poll`/`results`), the
+trusted-origin validator and the API URL configuration from first principles.
+No real network request or credential was used.
+
+### 21.2 Findings
+
+- **G-1 (High) — control-plane redirects could forward the PAT.** `submit`
+  (POST), `poll` and `results` (GET) used `requests` default redirect following.
+  `requests` strips only `Authorization` (not a custom `PRIVATE-TOKEN`) on a
+  cross-host redirect, and a 301/302/303 can silently downgrade a POST to GET.
+  A trusted-origin endpoint that responded 30x to a hostile location would leak
+  the PAT to that host or carry it over an HTTPS-to-HTTP downgrade. The C.3
+  residual-risk note (§20.7) is now **closed**.
+- **G-2 (Medium) — trusted-origin path check could be bypassed by dot segments
+  and confused by encoded separators.** `_in_trusted_path` compared the raw
+  path: `/api/../other` *startswith* `/api/` and would have been treated as
+  trusted while resolving to an off-path location, and an encoded separator
+  (`%2f`/`%5c`) could be decoded to `/` by a server. Userinfo and malformed
+  ports were not covered either.
+- **G-3 (Low) — no configuration validation.** `CdsTransport` would accept a
+  plaintext `http://` or hostless API URL and then silently send the PAT over
+  it.
+
+### 21.3 Fixes (smallest safe changes, `backend/app/services/cds.py`)
+
+- **Control plane rejects redirects explicitly.** `submit`/`poll`/`results` now
+  pass `allow_redirects=False`; `requests` never contacts the redirect target,
+  so the PAT cannot follow a 30x off-origin or downgrade hop. A 3xx response is
+  surfaced as `CdsApiError`. This is a behavior change: previously a redirect
+  would be transparently followed. The change is safe because the documented
+  CDS retrieve endpoints issue no redirects; not following one fails loudly
+  instead of leaking the credential. Control-plane authentication itself is
+  unchanged.
+- **Trusted-origin normalization.** `_normalized_path` is applied before the
+  base-path comparison: percent-escapes are decoded, literal and decoded
+  `.`/`..` dot segments are collapsed via `posixpath.normpath`, and a path that
+  is ``None`` (encoded `%2f`/`%5c` separator present) is rejected as untrusted.
+  `_is_trusted_url` catches malformed URLs and invalid ports (returning False
+  instead of raising), and compares scheme/host/effective-port exactly. An
+  explicit `:443` (or default port) matches the configured port; anything else
+  does not.
+- **Configuration validation.** `CdsTransport.__init__` now raises `CdsError`
+  unless `api_url` is a valid **https** URL with a host; an explicit port is
+  validated by `urlsplit`. Previously an `http://` or hostless API URL was
+  silently accepted.
+
+### 21.4 Trust semantics of an empty base path
+
+If the configured `api_url` has no path (e.g. `https://cds.example.invalid`),
+the trusted path is empty and **the whole scheme/host/port origin is trusted**.
+This cannot be broadened — an empty base path accepts the configured origin and
+only the configured origin. It is tested and documented rather than silently
+widened. A path with a trailing slash is normalized to its trimmed base (the
+URLs `…/api` and `…/api/…` are both trusted, off-path siblings are not).
+
+### 21.5 Evidence and redaction re-verification
+
+No changes were needed to the C.2 evidence/redaction implementation; the
+existing regression tests still pass unchanged:
+
+- persisted `request_url`/`final_url`/`redirect_chain` are redacted;
+  `jwt`/`token`/`sig` and `X-Amz-*` query parameters are stripped (§19);
+- response headers stay allowlisted (`last-modified`/`etag`/`date`) and bounded;
+- PAT/cookies/`Authorization`/signed URL values are never persisted;
+- failure records carry `http_status`/`response_headers` only when a real
+  `.response` exists (never fabricated);
+- `download()` returns the exact original bytes; downloaded bytes, recorded
+  SHA-256 and byte count are unchanged; the manifest is untouched;
+- `available_utc` is **never** derived from `Date`, `Last-Modified`, retrieval
+  time or filesystem timestamps;
+- contract version remains `1.1.0`.
+
+### 21.6 Regression tests added (offline, `backend/tests/test_cds_acquisition.py`)
+
+Control-plane redirect rejection:
+
+- `poll` with a cross-host 302 → `CdsApiError`, exactly one request,
+  `allow_redirects=False`.
+- `results` with an HTTPS-to-HTTP 301 → `CdsApiError`, one request.
+- `poll` with a 307 to an unexpected port → `CdsApiError`, one request.
+- `submit` with a self-referencing 308 loop → `CdsApiError`, one request.
+- `poll`+`results` success still send `PRIVATE-TOKEN` with `allow_redirects=False`.
+
+Trusted-origin matrix (parametrized, `_is_trusted_url`):
+
+- exact base, base-with-trailing-slash, `:443` explicit, on-path → trusted.
+- sibling `/apix`, off-path root, other host, `:8443`, `http` downgrade,
+  `%2F`/`%5C` encoded separators, `/api/../other` dot-segment escape → not
+  trusted. `/api/./retrieve/x` normalizes to trusted.
+- userinfo does not change the host (`attacker@host` trusted, `host@evil`
+  untrusted); malformed port and non-URL strings → untrusted, no exception.
+- trailing-slash configuration and an empty base path (whole-origin trust).
+  Config validation: `http://`, hostless, schemeless and bad-port API URLs
+  raise `CdsError`.
+
+### 21.7 Verification (from `backend/`)
+
+- `python -m pytest -o addopts="" tests/test_acquisition_rig.py tests/test_cds_acquisition.py`
+  → **129 passed**.
+- `python -m pytest -o addopts=""` → **313 passed**, 3 benign sklearn
+  `InconsistentVersionWarning`.
+- Secret scan (`C:\Users\ACER\AppData\Local\Temp\opencode\secret_scan.py`)
+  → 117 files vs 4 `.env` values, **hits=0**.
+- `git diff --check` (repo root) → **exit 0**.
+
+### 21.8 Manifest integrity
+
+- `data/provenance/acquisition_manifest.json`: unchanged, git blob
+  `07dc2cdd36fa6772b74dcf6a7a96706d99eb593c`, content SHA-256
+  `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`.
+- HEAD `da21f81ca76a8f886e87b7d9a8ed55a7fb7326cc`; nothing staged, committed or
+  pushed.
+
+### 21.9 Remaining security limitations
+
+- **Value-agnostic redaction limits are unchanged:** a secret embedded as a URL
+  **path** segment, under an **unrecognized** query name, or behind more than
+  four nested percent-encodings can still survive. The redactor flags sensitive
+  names and URL-shaped values; it is not an arbitrary secret finder.
+- **Trusted-origin path check is defense-in-depth only.** The scheme/host/port
+  comparison is the actual credential gate; the path check never broadens it,
+  but a path lookup is only as meaningful as the server's own decoding. If the
+  CDS API and its artifact host ever share an origin and a path, co-location
+  semantics would need re-verification.
+- **No real acquisition evidence is claimed.** External ERA5-Land
+  publication/availability evidence (Q6) has not been verified and predictive
+  accuracy is not established.
+
+### 21.10 Verdict
+
+The control-plane redirect leak (G-1) is closed: 3xx redirects, or a redirect
+that tried to change origin or downgrade to HTTP, are now rejected explicitly so
+the PAT can never follow them. The trusted-origin validator (G-2) and API URL
+configuration (G-3) are hardened and covered by an offline test matrix. Q6
+remains `EXTERNAL_EVIDENCE_REQUIRED`; historical acquisition remains
+`READY_FOR_ACQUISITION_PLANNING`; temporal feature computation remains
+`NEEDS_EVIDENCE`; production remains `NO-GO`.

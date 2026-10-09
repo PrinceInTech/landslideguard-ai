@@ -1003,7 +1003,14 @@ class AcquisitionDriver:
         manifest = load_acquisition_manifest(self.manifest_path)
         retrieved_utc = utcnow_aware()
 
-        def fail(kind: AcquisitionStatus, *, error: str, sha: str | None = None, rec_id: str | None = None):
+        def fail(
+            kind: AcquisitionStatus,
+            *,
+            error: str,
+            sha: str | None = None,
+            rec_id: str | None = None,
+            evidence: dict | None = None,
+        ):
             record = _make_record(
                 source,
                 acquisition_key=acquisition_key,
@@ -1016,6 +1023,7 @@ class AcquisitionDriver:
                 observation_start_utc=observation_start_utc,
                 observation_end_utc=observation_end_utc,
                 available_utc=available_utc,
+                **(evidence or {}),
             )
             _persist_record(manifest, record, self.manifest_path)
             return record
@@ -1057,14 +1065,53 @@ class AcquisitionDriver:
                 f"artifact already exists and will never be overwritten: {target}"
             )
 
-        # 4. Download the bytes.
+        # 4. Download the bytes (capturing artifact-response HTTP evidence).
         retrieved_utc = utcnow_aware()
+        request_url, request_redactions = redact_url(asset["href"])
         try:
-            data = transport.download(asset["href"])
+            result = transport.download_with_evidence(asset["href"])
         except Exception as exc:
             error = _sanitize_error(exc)
-            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            response = getattr(exc, "response", None)
+            # Evidence stays optional on failure: the redacted target URL and
+            # method are always known, but status/headers are recorded only if a
+            # real response object is attached. Never fabricate them.
+            failure_evidence: dict = {"request_url": request_url, "request_method": "GET"}
+            if response is not None:
+                failure_evidence["http_status"] = getattr(response, "status_code", None)
+                failure_headers = _allowlisted_headers(
+                    dict(getattr(response, "headers", {}) or {})
+                )
+                if failure_headers:
+                    failure_evidence["response_headers"] = failure_headers
+            fail(
+                AcquisitionStatus.FAILED,
+                error=error,
+                rec_id=job_id,
+                evidence=failure_evidence,
+            )
             raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        data = result.content
+        final_url, final_redactions = redact_url(result.final_url)
+        redirect_chain, chain_redactions = _redact_chain(result.redirect_chain)
+        combined_redactions = sorted(
+            set(request_redactions + final_redactions + chain_redactions)
+        ) or None
+        provider_metadata = {"dataset": dataset, "job_id": job_id}
+        asset_type = asset.get("type")
+        if isinstance(asset_type, str) and asset_type:
+            provider_metadata["asset_type"] = asset_type
+        evidence = dict(
+            request_url=request_url,
+            request_method="GET",
+            http_status=result.status_code,
+            response_headers=_allowlisted_headers(result.headers),
+            final_url=final_url,
+            redirect_chain=redirect_chain or None,
+            provider_metadata=provider_metadata,
+            redacted_params=combined_redactions,
+        )
 
         # 5. Checksum (caller's value wins; otherwise the provider-declared one).
         actual_sha256 = hashlib.sha256(data).hexdigest()
@@ -1098,6 +1145,7 @@ class AcquisitionDriver:
                 observation_start_utc=observation_start_utc,
                 observation_end_utc=observation_end_utc,
                 available_utc=available_utc,
+                **evidence,
             )
             _persist_record(manifest, record, self.manifest_path)
             return record
@@ -1117,6 +1165,7 @@ class AcquisitionDriver:
             observation_start_utc=observation_start_utc,
             observation_end_utc=observation_end_utc,
             available_utc=available_utc,
+            **evidence,
         )
         _persist_record(manifest, record, self.manifest_path)
         return record

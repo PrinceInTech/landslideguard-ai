@@ -27,6 +27,7 @@ from app.services.acquisition import (
 from app.services.cds import (
     CdsApiError,
     CdsAuthenticationError,
+    CdsError,
     CdsJobFailed,
     CdsMalformedResponse,
     CdsTimeout,
@@ -75,6 +76,9 @@ class FakeCds:
         poll_error=None,
         results_error=None,
         download_error=None,
+        download_headers=None,
+        download_final_url=None,
+        download_redirect_chain=(),
     ):
         self.job_id = job_id
         self.poll_status = poll_status
@@ -92,6 +96,9 @@ class FakeCds:
         self.poll_error = poll_error
         self.results_error = results_error
         self.download_error = download_error
+        self.download_headers = download_headers
+        self.download_final_url = download_final_url
+        self.download_redirect_chain = tuple(download_redirect_chain)
         self.submits = []
         self.polls = []
         self.results_calls = []
@@ -116,10 +123,22 @@ class FakeCds:
         return self.assets
 
     def download(self, url, headers=None):
+        return self.download_with_evidence(url, headers).content
+
+    def download_with_evidence(self, url, headers=None):
         self.downloads.append(url)
         if self.download_error:
             raise self.download_error
-        return self.payload
+        final_url = self.download_final_url
+        if final_url is None:
+            final_url = self.assets[0]["href"] if self.assets else url
+        return cds_service.CdsDownloadResult(
+            content=self.payload,
+            status_code=200,
+            headers=dict(self.download_headers or {}),
+            final_url=final_url,
+            redirect_chain=self.download_redirect_chain,
+        )
 
 
 def _driver(tmp_path, monkeypatch):
@@ -143,11 +162,23 @@ def _failures_in(manifest):
 
 
 class _Response:
-    def __init__(self, status_code, payload=None, text=None, content=None):
+    def __init__(
+        self,
+        status_code,
+        payload=None,
+        text=None,
+        content=None,
+        headers=None,
+        url="",
+        history=(),
+    ):
         self.status_code = status_code
         self._payload = payload
         self.text = text if text is not None else (json.dumps(payload) if payload is not None else "")
         self.content = content if content is not None else self.text.encode("utf-8")
+        self.headers = headers if headers is not None else {}
+        self.url = url
+        self.history = history
 
     def json(self):
         if self._payload is None:
@@ -162,10 +193,11 @@ class _Response:
 def _fake_post(monkeypatch, response_fn):
     captured = {}
 
-    def post(url, headers=None, json=None, timeout=None):
+    def post(url, headers=None, json=None, timeout=None, allow_redirects=None):
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
+        captured["allow_redirects"] = allow_redirects
         return response_fn(captured)
 
     monkeypatch.setattr(cds_service.requests, "post", post)
@@ -173,7 +205,7 @@ def _fake_post(monkeypatch, response_fn):
 
 
 def _fake_get(monkeypatch, response_map):
-    def get(url, headers=None, timeout=None):
+    def get(url, headers=None, timeout=None, allow_redirects=None):
         return response_map[url]
 
     monkeypatch.setattr(cds_service.requests, "get", get)
@@ -266,7 +298,7 @@ def test_wait_for_success_polls_to_terminal(monkeypatch):
     transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY, poll_interval_seconds=1)
     calls = []
 
-    def get(url, headers=None, timeout=None):
+    def get(url, headers=None, timeout=None, allow_redirects=None):
         calls.append(url)
         status = "successful" if len(calls) > 1 else "running"
         return _Response(200, {"status": status})
@@ -506,3 +538,454 @@ def test_acquire_cds_never_persists_secrets(tmp_path, monkeypatch):
     assert "PRIVATE-TOKEN" not in str(record.retrieval_params)
     assert record.retrieval_params.get("dataset") == DATASET
     assert record.retrieval_params.get("inputs") == INPUTS
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.7.3C.2 -- artifact-download evidence, credential boundary, redaction
+# ---------------------------------------------------------------------------
+
+
+def test_download_with_evidence_follows_redirect_and_captures_evidence(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    start = "https://cdn.example.invalid/a.nc"
+    final = "https://cdn.example.invalid/final.nc"
+    responses = {
+        start: _Response(302, content=b"", headers={"location": final}, url=start),
+        final: _Response(
+            200,
+            content=b"\x00\x01bytes",
+            headers={"Last-Modified": "Wed, 01 Oct 2026 00:00:00 GMT", "ETag": '"abc"'},
+            url=final,
+        ),
+    }
+    monkeypatch.setattr(
+        cds_service.requests,
+        "get",
+        lambda url, headers=None, timeout=None, allow_redirects=None: responses[url],
+    )
+    result = transport.download_with_evidence(start)
+    assert result.content == b"\x00\x01bytes"
+    assert result.status_code == 200
+    assert result.headers["Last-Modified"] == "Wed, 01 Oct 2026 00:00:00 GMT"
+    assert result.final_url == final
+    assert result.redirect_chain == (start,)
+
+
+def test_download_does_not_send_token_to_external_host(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = {}
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        captured["headers"] = headers
+        return _Response(200, content=b"x", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    transport.download("https://cdn.example.invalid/results/a.nc?jwt=abc")
+    assert "PRIVATE-TOKEN" not in captured["headers"]
+    assert FAKE_KEY not in json.dumps(captured["headers"])
+
+
+def test_download_sends_token_only_to_trusted_origin(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = {}
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        captured["headers"] = headers
+        return _Response(200, content=b"x", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    transport.download(f"{FAKE_URL}/retrieve/v1/jobs/job-1/results/file.nc")
+    assert captured["headers"]["PRIVATE-TOKEN"] == FAKE_KEY
+
+
+def test_download_token_absent_for_off_path_same_host(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = {}
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        captured["headers"] = headers
+        return _Response(200, content=b"x", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    transport.download("https://cds.example.invalid/other/file.nc")
+    assert "PRIVATE-TOKEN" not in captured["headers"]
+
+
+def test_download_token_absent_for_different_port(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = {}
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        captured["headers"] = headers
+        return _Response(200, content=b"x", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    transport.download("https://cds.example.invalid:8443/api/retrieve/v1/file.nc")
+    assert "PRIVATE-TOKEN" not in captured["headers"]
+
+
+def test_download_token_absent_on_http_downgrade(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = {}
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        captured["headers"] = headers
+        return _Response(200, content=b"x", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    transport.download("http://cds.example.invalid/api/retrieve/v1/file.nc")
+    assert "PRIVATE-TOKEN" not in captured["headers"]
+
+
+def test_download_redirect_does_not_forward_token_to_external_host(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    trusted = f"{FAKE_URL}/retrieve/v1/jobs/job-1/results/file.nc"
+    external = "https://cdn.example.invalid/stolen.nc"
+    seen = []
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        seen.append((url, dict(headers or {}), allow_redirects))
+        if url == trusted:
+            return _Response(302, content=b"", headers={"location": external}, url=url)
+        return _Response(200, content=b"artifact", url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    result = transport.download_with_evidence(trusted)
+    assert result.content == b"artifact"
+    assert result.final_url == external
+    assert result.redirect_chain == (trusted,)
+    assert "PRIVATE-TOKEN" in seen[0][1]
+    assert "PRIVATE-TOKEN" not in seen[1][1]
+    assert FAKE_KEY not in json.dumps(seen[1][1])
+    assert all(hop[2] is False for hop in seen)
+
+
+def test_download_too_many_redirects_raises(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    loop = "https://cdn.example.invalid/loop.nc"
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        return _Response(302, content=b"", headers={"location": loop}, url=url)
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    with pytest.raises(CdsApiError):
+        transport.download_with_evidence(loop)
+
+
+def test_control_plane_still_sends_token(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = _fake_post(
+        monkeypatch, lambda c: _Response(201, {"jobID": "job-1", "status": "accepted"})
+    )
+    transport.submit(DATASET, INPUTS)
+    assert captured["headers"]["PRIVATE-TOKEN"] == FAKE_KEY
+    assert captured["allow_redirects"] is False
+
+
+def test_acquire_cds_records_download_evidence(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    fake = FakeCds(
+        download_headers={
+            "Last-Modified": "Wed, 01 Oct 2026 00:00:00 GMT",
+            "ETag": '"abc"',
+            "Set-Cookie": "session=SECRETCOOKIE",
+            "Authorization": "Bearer SECRETTOKEN",
+            "Retry-After": "30",
+        },
+        download_final_url="https://cdn.example.invalid/final.nc?token=FINALSECRET",
+        download_redirect_chain=["https://cdn.example.invalid/hop?sig=HOPSECRET"],
+    )
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    assert record.status == "downloaded"
+    assert record.request_method == "GET"
+    assert record.http_status == 200
+    assert record.response_headers == {
+        "last-modified": "Wed, 01 Oct 2026 00:00:00 GMT",
+        "etag": '"abc"',
+    }
+    assert "REDACTED" in (record.request_url or "")
+    assert "jwt" in (record.redacted_params or [])
+    assert "token" in (record.redacted_params or [])
+    assert "sig" in (record.redacted_params or [])
+    assert "FINALSECRET" not in (record.final_url or "")
+    assert "HOPSECRET" not in "".join(record.redirect_chain or [])
+    assert record.provider_metadata == {
+        "dataset": DATASET,
+        "job_id": "job-123",
+        "asset_type": "application/x-netcdf",
+    }
+    blob = load_acquisition_manifest(manifest_path).model_dump_json()
+    for secret in ("SECRETCOOKIE", "SECRETTOKEN", "FINALSECRET", "HOPSECRET", FAKE_KEY):
+        assert secret not in blob
+
+
+def test_acquire_cds_redacts_signed_asset_urls(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    payload = b"ERA5L data bytes"
+    href = (
+        "https://cdn.example.invalid/r.nc?"
+        "token=TOKVAL&jwt=JWTVAL&sig=SIGVAL"
+        "&X-Amz-Signature=AWSSIGVAL&X-Amz-Credential=CREDVAL"
+    )
+    fake = FakeCds(
+        assets=[
+            {
+                "type": "application/x-netcdf",
+                "href": href,
+                "file:checksum": hashlib.sha256(payload).hexdigest(),
+                "file:size": len(payload),
+                "file:local_path": "/r.nc",
+            }
+        ]
+    )
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    blob = load_acquisition_manifest(manifest_path).model_dump_json()
+    for secret in ("TOKVAL", "JWTVAL", "SIGVAL", "AWSSIGVAL", "CREDVAL"):
+        assert secret not in blob
+    assert set(record.redacted_params or []) >= {"token", "jwt", "sig"}
+    assert any("signature" in name.lower() for name in record.redacted_params or [])
+    assert any("credential" in name.lower() for name in record.redacted_params or [])
+
+
+class _FailingResponseError(RuntimeError):
+    def __init__(self, message, response):
+        super().__init__(message)
+        self.response = response
+
+
+def test_acquire_cds_download_failure_records_no_artifact(tmp_path, monkeypatch):
+    driver, raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    boom = RuntimeError(
+        "failed to GET https://cdn.example.invalid/r.nc?token=TOPSECRET&jwt=JWTSECRET"
+    )
+    fake = FakeCds(download_error=boom)
+    with pytest.raises(AcquisitionError) as exc:
+        driver.acquire_cds(dataset=DATASET, inputs=INPUTS, cds=fake)
+    assert "TOPSECRET" not in str(exc.value)
+    assert "JWTSECRET" not in str(exc.value)
+    failures = _failures_in(load_acquisition_manifest(manifest_path))
+    assert len(failures) == 1
+    assert failures[0].storage_path is None
+    assert failures[0].request_method == "GET"
+    assert "REDACTED" in (failures[0].request_url or "")
+    assert failures[0].http_status is None
+    assert list(raw_root.rglob("*")) == []
+
+
+def test_acquire_cds_download_failure_with_response_records_status(tmp_path, monkeypatch):
+    driver, raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    resp = _Response(503, text="upstream down", headers={"Retry-After": "30", "ETag": '"x"'})
+    boom = _FailingResponseError(
+        "HTTP 503 https://cdn.example.invalid/r.nc?token=TOPSECRET", resp
+    )
+    fake = FakeCds(download_error=boom)
+    with pytest.raises(AcquisitionError):
+        driver.acquire_cds(dataset=DATASET, inputs=INPUTS, cds=fake)
+    failures = _failures_in(load_acquisition_manifest(manifest_path))
+    assert failures[0].http_status == 503
+    assert failures[0].response_headers == {"etag": '"x"'}
+    assert list(raw_root.rglob("*")) == []
+
+
+def test_acquire_cds_control_plane_errors_are_sanitized(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    boom = CdsApiError(
+        "HTTP 500: https://api.example/x?token=TOPSECRET&jwt=JWTSECRET"
+    )
+    fake = FakeCds(submit_error=boom)
+    with pytest.raises(AcquisitionError) as exc:
+        driver.acquire_cds(dataset=DATASET, inputs=INPUTS, cds=fake)
+    assert "TOPSECRET" not in str(exc.value)
+    assert "JWTSECRET" not in str(exc.value)
+    failures = _failures_in(load_acquisition_manifest(manifest_path))
+    assert "TOPSECRET" not in (failures[0].error or "")
+    assert "JWTSECRET" not in (failures[0].error or "")
+
+
+def test_acquire_cds_available_utc_not_derived_from_headers(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    fake = FakeCds(
+        download_headers={
+            "Date": "Wed, 01 Oct 2026 12:00:00 GMT",
+            "Last-Modified": "Wed, 01 Oct 2026 00:00:00 GMT",
+        }
+    )
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    assert record.available_utc is None
+    assert record.availability_classification is None
+    assert record.response_headers.get("date") == "Wed, 01 Oct 2026 12:00:00 GMT"
+    assert record.response_headers.get("last-modified") == "Wed, 01 Oct 2026 00:00:00 GMT"
+
+
+def test_acquire_cds_artifact_bytes_sha_size_identical(tmp_path, monkeypatch):
+    driver, raw_root, _manifest_path = _driver(tmp_path, monkeypatch)
+    payload = b"\x00\x01binary artifact\r\n with trailing bytes"
+    fake = FakeCds(payload=payload)
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    assert record.sha256 == hashlib.sha256(payload).hexdigest()
+    assert record.file_size_bytes == len(payload)
+    assert (raw_root / record.storage_path).read_bytes() == payload
+
+
+def test_acquire_cds_manifest_contract_version_unchanged(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=FakeCds()
+    )
+    assert load_acquisition_manifest(manifest_path).contract_version == "1.1.0"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.7.3C.4 -- control-plane redirect rejection and trusted-origin matrix
+# ---------------------------------------------------------------------------
+
+
+def _capture_get(monkeypatch, response):
+    """Monkeypatch ``requests.get`` and record every call."""
+    calls = []
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        calls.append(
+            {"url": url, "headers": dict(headers or {}), "allow_redirects": allow_redirects}
+        )
+        return response
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    return calls
+
+
+def test_poll_rejects_cross_host_redirect(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    calls = _capture_get(
+        monkeypatch,
+        _Response(302, text="", headers={"location": "https://evil.example/stolen"}),
+    )
+    with pytest.raises(CdsApiError):
+        transport.poll("job-1")
+    assert len(calls) == 1
+    assert calls[0]["allow_redirects"] is False
+    assert calls[0]["url"].startswith(f"{FAKE_URL}/retrieve/v1/jobs/")
+
+
+def test_results_rejects_https_to_http_redirect(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    calls = _capture_get(
+        monkeypatch,
+        _Response(301, text="", headers={"location": "http://cds.example.invalid/api/x"}),
+    )
+    with pytest.raises(CdsApiError):
+        transport.results("job-1")
+    assert len(calls) == 1
+    assert calls[0]["allow_redirects"] is False
+
+
+def test_poll_rejects_redirect_to_unexpected_port(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    calls = _capture_get(
+        monkeypatch,
+        _Response(307, text="", headers={"location": "https://cds.example.invalid:8443/api/x"}),
+    )
+    with pytest.raises(CdsApiError):
+        transport.poll("job-1")
+    assert len(calls) == 1
+    assert calls[0]["allow_redirects"] is False
+
+
+def test_submit_rejects_redirect_loop(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    calls = []
+
+    def post(url, headers=None, json=None, timeout=None, allow_redirects=None):
+        calls.append({"url": url, "allow_redirects": allow_redirects})
+        return _Response(308, text="", headers={"location": url})
+
+    monkeypatch.setattr(cds_service.requests, "post", post)
+    with pytest.raises(CdsApiError):
+        transport.submit(DATASET, INPUTS)
+    assert len(calls) == 1
+    assert calls[0]["allow_redirects"] is False
+    assert "PRIVATE-TOKEN" not in str(calls)
+    assert FAKE_KEY not in json.dumps(calls)
+
+
+def test_poll_and_results_keep_authentication(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    calls = []
+
+    def get(url, headers=None, timeout=None, allow_redirects=None):
+        calls.append((url, dict(headers or {}), allow_redirects))
+        if url.endswith("/results"):
+            return _Response(200, {"asset": {"value": []}})
+        return _Response(200, {"status": "running"})
+
+    monkeypatch.setattr(cds_service.requests, "get", get)
+    assert transport.poll("job-1") == ("running", None)
+    assert transport.results("job-1") == []
+    assert len(calls) == 2
+    for url, headers, allow_redirects in calls:
+        assert headers["PRIVATE-TOKEN"] == FAKE_KEY
+        assert allow_redirects is False
+
+
+def test_api_url_must_be_https_with_host():
+    with pytest.raises(CdsError):
+        CdsTransport(api_url="http://cds.example.invalid/api", api_key=FAKE_KEY)
+    with pytest.raises(CdsError):
+        CdsTransport(api_url="cds.example.invalid/api", api_key=FAKE_KEY)
+    with pytest.raises(CdsError):
+        CdsTransport(api_url="https:///api", api_key=FAKE_KEY)
+    with pytest.raises(CdsError):
+        CdsTransport(api_url="https://cds.example.invalid:badport/api", api_key=FAKE_KEY)
+
+
+@pytest.mark.parametrize(
+    "url,trusted",
+    [
+        (f"{FAKE_URL}/retrieve/v1/processes/x", True),
+        ("https://cds.example.invalid/api", True),
+        ("https://cds.example.invalid/api/", True),
+        ("https://cds.example.invalid/api/retrieve/v1/x", True),
+        ("https://cds.example.invalid/apix/x", False),
+        ("https://cds.example.invalid/other/x", False),
+        ("https://cds.example.invalid/", False),
+        ("https://cds.example.invalid:443/api/x", True),
+        ("https://cds.example.invalid:8443/api/x", False),
+        ("http://cds.example.invalid/api/x", False),
+        ("https://other.example/api/x", False),
+        ("https://cds.example.invalid/api%2Fother/x", False),
+        ("https://cds.example.invalid/api%5cx", False),
+        ("https://cds.example.invalid/api/../other/x", False),
+        ("https://cds.example.invalid/api/./retrieve/x", True),
+        ("https://attacker@cds.example.invalid/api/x", True),
+        ("https://cds.example.invalid@evil.example/api/x", False),
+        ("https://cds.example.invalid:badport/api/x", False),
+        ("https://cds.example.invalid/api/x?X-Amz-Signature=zzz", True),
+        ("not-a-url", False),
+        ("https://", False),
+    ],
+)
+def test_trusted_origin_matrix(url, trusted):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    assert transport._is_trusted_url(url) is trusted
+
+
+def test_trusted_origin_trailing_slash_config():
+    transport = CdsTransport(api_url="https://cds.example.invalid/api/", api_key=FAKE_KEY)
+    assert transport._is_trusted_url("https://cds.example.invalid/api/retrieve/v1/x") is True
+    assert transport._is_trusted_url("https://cds.example.invalid/apix/x") is False
+
+
+def test_trusted_origin_empty_base_path():
+    transport = CdsTransport(api_url="https://cds.example.invalid", api_key=FAKE_KEY)
+    assert transport._is_trusted_url("https://cds.example.invalid/anything/here") is True
+    assert transport._is_trusted_url("https://cds.example.invalid") is True
+    assert transport._is_trusted_url("https://cds.example.invalid.evil/api") is False
+    assert transport._is_trusted_url("http://cds.example.invalid/x") is False

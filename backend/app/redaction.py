@@ -27,6 +27,7 @@ MAX_PROVIDER_METADATA_KEY_LENGTH = 128
 #: match. Over-redaction (e.g. ``keywords``) is accepted as the safe default.
 SENSITIVE_KEY_SUBSTRINGS: tuple[str, ...] = (
     "token",
+    "jwt",
     "key",
     "api_key",
     "apikey",
@@ -40,7 +41,7 @@ SENSITIVE_KEY_SUBSTRINGS: tuple[str, ...] = (
 
 #: Query-parameter names whose values are credentials/signatures.
 _SENSITIVE_QUERY_RE = re.compile(
-    r"(token|key|api_key|apikey|secret|password|auth|sig|signature|credential|expires)",
+    r"(token|jwt|key|api_key|apikey|secret|password|auth|sig|signature|credential|expires)",
     re.IGNORECASE,
 )
 
@@ -54,7 +55,7 @@ _URL_IN_TEXT_RE = re.compile(r"(?:https?|ftp)://[^\s<>\"'`]+", re.IGNORECASE)
 #: ``key=value`` / ``key: value`` secrets embedded in free text.
 _KV_IN_TEXT_RE = re.compile(
     r"(?i)\b([A-Za-z0-9_.\-]*"
-    r"(?:token|api[_-]?key|apikey|secret|password|auth|sig|signature|credential)"
+    r"(?:token|jwt|api[_-]?key|apikey|secret|password|auth|sig|signature|credential)"
     r"[A-Za-z0-9_.\-]*)"
     r"\s*[=:]\s*([^\s&,;]+)"
 )
