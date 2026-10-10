@@ -2121,3 +2121,540 @@ never promoted and survive serialization verbatim. Production remains **NO-GO**
 and Q6/Q7 remain `EXTERNAL_EVIDENCE_REQUIRED` — until external availability
 evidence and sufficient verified historical coverage are actually established,
 the production policy can never be satisfied by the current committed records.
+
+## 25. Phase 3.7.5A — Official evidence research record (Q6 / Q7)
+
+Research-and-documentation phase. Inspect the official CHC / ECMWF / CDS sources
+below, record what the Q6 (CHIRPS) and Q7 (ERA5-Land) general publication
+schedules actually establish, and register the verdict without altering any code,
+artifact or manifest. **No commit / push in this phase; the only working-tree
+change is this section.**
+
+### 25.1 Scope and method
+
+- Retrieval date: **2026-10-09** (UTC). Pages inspected live via an HTTP fetcher.
+- Position on the decision register: Q6 = CHIRPS, Q7 = ERA5-Land, both
+  `EXTERNAL_EVIDENCE_REQUIRED` since Phase 3.7.4A (§22), carried through the
+  availability gate (§23) and integration audit (§24); production **NO-GO**. This
+  phase does not upgrade either `available_utc`.
+- No changes to `backend/`, `data/`, or any test. Only
+  `docs/historical-data-coverage.md` is edited (append).
+- Sources inspected: 6 URLs. Sources not inspected: 1 URL (transport error,
+  recorded below; its content is not relied on anywhere).
+
+### 25.2 URLs and inspection status
+
+| # | URL | Status 2026-10-09 | Notes |
+| - | --- | ----------------- | ----- |
+| 1 | https://www.chc.ucsb.edu/data/chirps | inspected | CHIRPS v2 product page |
+| 2 | https://wiki.chc.ucsb.edu/CHIRPS_FAQ | **NOT inspected — transport error (attempted twice)** | content not relied on |
+| 3 | https://www.chc.ucsb.edu/data/chirps3 | inspected | CHIRPS v3 product page |
+| 4 | https://data.chc.ucsb.edu/products/CHIRPS-2.0/README-CHIRPS2-Daily.txt | inspected | official daily v2 README, linked from the v2 page |
+| 5 | https://confluence.ecmwf.int/pages/viewpage.action?pageId=355336451 | inspected | ECMWF Knowledge Base "ERA5-Land data documentation" (capture partially truncated) |
+| 6 | https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land?tab=documentation | inspected | CDS ERA5-Land dataset page (capture partially truncated) |
+
+### 25.3 Q6 — CHIRPS: what the official pages establish
+
+Facts surfaced by the inspected CHC pages (general product/cadence statements;
+**no per-file publication timestamps**):
+
+- CHIRPS v2 is a 35+ year quasi-global (50°S–50°N) rainfall dataset, 1981 to
+  near-present (`chirps` product page).
+- "CHIRPS v3 is now available! … Production of CHIRPS v2 will end after
+  December 2026." (`chirps` product page); the v3 page in turn states
+  "CHIRPS v3.0 replaces the widely used CHIRPS v2.0. To support users during
+  this transition, the production of CHIRPS v2.0 will continue through 2026."
+- Daily CHIRPS v2 is produced from pentad totals using CFSv2 daily downscaling
+  ratios; "Preliminary daily CHIRPS2 uses the same CFSv2-based daily downscaling
+  approach"; CHIRP2 daily downscaling uses IMERGv7 (daily README).
+- CHIRPS v3 cadence (v3-only): preliminary available 2 days after the end of a
+  pentad (2nd, 7th, 12th, 17th, 22nd, 27th of each month); final produced once a
+  month, typically the third week of the following month (v3 product page).
+
+Implications for the exact artifact
+`chirps__v2.x__2026-08-31.tif.gz` (sha256 `44934651…`, 10,288,665 B; ledger
+`REAL-chirps-v2.0-2026-08-31`):
+
+- No inspected page states a per-file availability timestamp or an explicit
+  v2-daily final-vs-preliminary publication lag. The **v3 cadence does not
+  transfer** to the v2 artifact, and the daily README confirms the same
+  downscaling method for preliminary and (implied) final daily v2, so the
+  filename cannot disambiguate which stream the acquired file belongs to.
+- The ledger value `available_utc = 2026-09-11T21:10:59Z` remains a bare literal:
+  re-verified this phase — `availability_classification`,
+  `availability_source`, `availability_derivation`, `request_url`, `final_url`,
+  `response_headers` and `provider_metadata` are all `null` for the CHIRPS
+  record, and no script or note derives the value (§7A, unchanged).
+- A reproducible conservative bound **cannot** be defined for this artifact from
+  the inspected official sources (no stated v2 cadence constant). Feasible
+  artifact-specific evidence, if it is ever needed, is external and future-dated:
+  an HTTP `Last-Modified` / dated `data.chc.ucsb.edu` directory listing for the
+  exact file name, CHC ERDDAP/catalog metadata, or an independent archive
+  (e.g. IRI/LDEO, climateSERV). None was captured at acquisition time.
+
+Verdict Q6: **unchanged — `EXTERNAL_EVIDENCE_REQUIRED`.** The inspected pages
+support the general product/cadence narrative but do not evidence this file's
+publication timestamp.
+
+### 25.4 Q7 — ERA5-Land: what the official pages establish
+
+Facts surfaced by the ECMWF Knowledge Base "ERA5-Land data documentation" and the
+CDS dataset page (general schedule/catalog statements):
+
+- Consolidated ERA5-Land covers January 1950 to 2–3 months before the present;
+  ERA5-Land-T provides near-real-time daily updates (~5 days behind real time),
+  with monthly mean updates ~5 days after the end of the month.
+- On the CDS, ERA5-Land-T data for a month are overwritten by the final
+  ERA5-Land data **about two months** after the month in question.
+- netCDF caveat: "for netCDF data requests which return just ERA5-Land or just
+  ERA5-Land-T data, there is no means of differentiating between ERA5-Land and
+  ERA5-Land-T data in the resulting netCDF files" (the `expver` discriminator
+  exists only in GRIB headers).
+- CDS catalog page: "ERA5-Land hourly data from 1950 to present"; DOI
+  `10.24381/cds.e2161bac` — matches the ledger access reference; dataset
+  publication date 2019-07-12; update date 2026-10-09.
+
+Implications for the exact artifact
+`era5-land__operational-consolidated-2-months-era5-land-t-5-days__2026-07-15t0000.nc`
+(sha256 `af53a81a…`, 127,970 B; ledger
+`REAL-era5-land-…-2026-07-15t0000`, status `downloaded`):
+
+- Observation month is July 2026. Per the docs, final consolidated ERA5-Land for
+  that month becomes available "about two months after the month" (≈ end of
+  September 2026).
+- The file is netCDF; per the official caveat, the in-file stream (Land vs
+  Land-T) cannot be differentiated — stream identity rests on the filename label
+  ("operational-consolidated-2-months", "era5-land-t-5-days"), which is
+  self-attested, not provider-verified.
+- The ledger value `available_utc = 2026-09-15T00:00:00Z` is algebraically
+  consistent with the vintage datetime (2026-07-15T00:00Z) + 2 months, matching
+  the "2-months" label, but: it is **not** provider-issued; the docs' wording is
+  approximate ("about two months", no published constant); and the value precedes
+  the ≈ end-of-September reading, so it is a conservative engineering bound and
+  must not be presented as a validated safety margin. All derivation/evidence
+  fields are `null` for the record (§25.5 re-verified).
+  - The manifest stores 5 records for this `record_id` (4 `failed`, 1
+    `downloaded`); the identical `available_utc` appears on the failed attempts,
+    confirming it was fixed ahead of any successful provider response —
+    consistent with a derived bound, not a captured header.
+- Candidate reproducible rule (design only, not yet adopted): rule v1 —
+  `available_bound_utc = vintage_start + 2 calendar months + K days` (integer
+  slack `K` as a conservative engineering parameter), citing the KB page URL, with
+  rule version and audit trail. `K` is **not provider-validated**; the current
+  ledger value corresponds to `K = 0` under same-day-of-month arithmetic and is
+  not yet this documented rule. Adopting rule v1 is a separate recorded decision.
+
+Verdict Q7: **unchanged — `EXTERNAL_EVIDENCE_REQUIRED`.** Official pages confirm
+the general schedule the label encodes, but no official source gives a
+provider-issued timestamp for this exact vintage.
+
+### 25.5 Evidence matrix
+
+| # | Claim | Evidence location | Evidence type | Confidence / limitations | Register status |
+| - | ----- | ----------------- | ------------- | ------------------------ | --------------- |
+| 1 | CHIRPS v2: 35+ yr, 50°S–50°N, 1981 to near-present | `chirps` page | official product page | general; no per-file timestamps | supports inventory note, not Q6 |
+| 2 | CHIRPS v2 production ends after December 2026 (v3 transition) | `chirps` + `chirps3` pages | official product pages | general migration statement | supports §22/§23 note; not Q6 evidence |
+| 3 | Daily CHIRPS v2 from pentads via CFSv2 ratios; preliminary daily same approach; CHIRP2 uses IMERGv7 | daily README | official README | general; filename cannot separate preliminary vs final | not Q6 evidence |
+| 4 | CHIRPS v3 preliminary 2 days after pentad end; v3 final ~3rd week of following month | `chirps3` page | official product page | v3-specific; does not transfer to v2 artifact | not Q6 evidence |
+| 5 | v2 artifact `available_utc=2026-09-11T21:10:59Z` is provider-issued | none | — | no external evidence; all derivation fields `null` (§7A unchanged) | **Q6 `EXTERNAL_EVIDENCE_REQUIRED`** |
+| 6 | ERA5-Land consolidated 1950 to 2–3 months before present | KB page | official docs | general | supports inventory note; not Q7 evidence |
+| 7 | ERA5-Land-T NRT ~5 days behind real time; monthly means ~5 days after month end | KB page | official docs | general; NRT stream ≠ consolidated artifact | not Q7 evidence |
+| 8 | Final ERA5-Land overwrites ERA5-Land-T on CDS ~2 months after the month | KB page | official docs | general; approximate wording only | basis for a future derived rule; not Q7 proof |
+| 9 | netCDF cannot differentiate ERA5-Land vs ERA5-Land-T in-file | KB page | official docs | artifact-relevant; stream identity = filename label | limitation on Q7 evidence |
+| 10 | ERA5 artifact `available_utc=2026-09-15T00:00:00Z` is provider-issued | none | — | derived bound (vintage + 2 mo); all derivation fields `null`; identical value on failed attempts | **Q7 `EXTERNAL_EVIDENCE_REQUIRED`** |
+| 11 | CDS catalog: hourly 1950–present, DOI `10.24381/cds.e2161bac`, publ. 2019-07-12, upd. 2026-10-09 | CDS page | official catalog | general; matches ledger access reference | not Q7 evidence |
+
+### 25.6 Not inspected / limitations
+
+- `https://wiki.chc.ucsb.edu/CHIRPS_FAQ` could not be inspected (transport error,
+  attempted twice). Recorded as not inspected; its content is not relied upon.
+- The ECMWF and CDS captures were partially truncated in retrieval; the facts
+  above are those surfaced in the captured content, not necessarily the full
+  wording of the live pages.
+- Historic HTTP metadata (`Last-Modified`, `Date`, final URL, response headers)
+  was never captured at acquisition time (§7A item 4 verified), so a
+  provider-issued timestamp for either committed artifact is **not recoverable
+  from repository records** — any future evidence requires a new external query,
+  which would only reflect the file's state at that later time.
+- The v3 cadence facts (§25.3) describe CHIRPS v3 and must not be silently
+  re-piped into the v2 artifact.
+- The manifest's repeated ERA5 records (4 failed + 1 downloaded for the same
+  `record_id`) document retry history; the committed artifact is the single
+  downloaded netCDF, and no record, manifest field, or checksum was modified by
+  this phase.
+
+### 25.7 Verification
+
+- `git rev-parse HEAD` → `7a4afbe` (unchanged; no commit made this phase).
+- `git status --short` → only `docs/historical-data-coverage.md` modified.
+- `git diff --check` → exit 0.
+- `data/provenance/acquisition_manifest.json` byte-identical (blob
+  `07dc2cdd…`, sha256 `1f2b9434…`, contract `1.1.0`); no push performed.
+
+### 25.8 Verdict
+
+Both registers are **unchanged**: Q6 and Q7 remain `EXTERNAL_EVIDENCE_REQUIRED`,
+production remains **NO-GO**, and production-grade temporal features for both
+sources remain `NEEDS_EVIDENCE`. Neither `available_utc` was upgraded, re-dated,
+or replaced. The official pages validate the general publication narratives
+(v2 production ending after December 2026; ERA5-Land-T ≈ 5 days NRT; consolidated
+≈ 2 months) but no inspected page provides the per-file, provider-issued
+timestamps that Q6/Q7 require. Phase 3.7.5A leaves the decision register intact
+and adds a persistent official-source record for future phases to cite.
+
+## 26. Phase 3.7.5B — Acquisition evidence capture audit
+
+Audit of whether future CHIRPS and ERA5-Land acquisitions can capture
+trustworthy availability evidence **at acquisition time**, without fabricating
+historical publication timestamps. One backward-compatible fix was applied
+(see §26.6); the registers are otherwise unchanged. **No commit / push; the
+manifest and feature contract are untouched.**
+
+### 26.1 Scope and method
+
+- Starting checkpoint: HEAD `7a4afbe` with only `docs/historical-data-coverage.md`
+  modified (Phase 3.7.5A §25). §25 is preserved verbatim.
+- Inspected: `backend/app/services/acquisition.py`, `backend/app/services/cds.py`,
+  `backend/app/redaction.py`, `backend/app/schemas/acquisition.py`,
+  `backend/app/schemas/provenance.py`, `backend/tests/test_acquisition_rig.py`,
+  `backend/tests/test_cds_acquisition.py`, documentation §§19–25.
+- No live provider access anywhere in unit tests; all fixtures are synthetic and
+  offline. No evidence is invented for the existing 2026-08-31 / 2026-07-15
+  artifacts. CDS job-payload field names cited in §26.3 are taken from the
+  official ECMWF API documentation (example job-status payload), not from a live
+  request.
+
+### 26.2 CHIRPS direct-download path — what `acquire()` captures today
+
+| Evidence | Where | Captured? | Failure path |
+| -------- | ----- | --------- | ------------ |
+| Requested URL (userinfo / signed-query secrets redacted) | `request_url` | yes, every attempt | yes |
+| HTTP method | `request_method` | yes ("GET") | yes |
+| Final HTTP status | `http_status` | yes | only if the exception carries a `.response` |
+| Redirect chain (redacted hops) | `redirect_chain`, `final_url` | yes | only if a real response exists |
+| `Date` / `Last-Modified` / `ETag` when provided | `response_headers` (allowlist) | yes | only if a real response exists |
+| `Content-Length` when provided | `response_headers` | **now yes** (§26.6); omitted before | only if a real response exists |
+| Retrieval instant (when the GET was issued) | `retrieved_utc` | yes | yes (acquisition start) |
+| Content SHA-256 / byte count | `sha256`, `file_size_bytes` | yes (computed) | computed only when bytes exist |
+| Source/version and observation interval | `product_version`, `observation_start/end_utc` | caller-supplied | caller-supplied |
+| Availability timestamp + classification/source/derivation | `available_utc`, `availability_*` | caller/rule-supplied; **never auto-derived from headers** | caller/rule-supplied |
+
+The direct path captures full artifact-response HTTP evidence for every
+download. What it cannot do today: fetch or persist a dated directory/catalog
+record (see §26.5).
+
+### 26.3 ERA5-Land CDS path — what timestamps each stage exposes
+
+The CDS retrieve/v1 flow (`CdsTransport.submit` → `wait_for_success`/`poll` →
+`results` → `download_with_evidence`) is a two-phase job API. Per stage:
+
+1. **Request submission** — `POST …/processes/{dataset}/execution` returns HTTP
+   201 with the job status object (per the official ECMWF FAQ the creation
+   response is "nearly identical" to the job-status response and carries the
+   job's `created`/`updated` fields). The client extracts only `jobID`; the
+   201 payload's timestamps, status and headers are **not captured**.
+2. **Job state transitions / completion** — `GET …/jobs/{job_id}` returns e.g.
+   `status`, `message`, `created`, `started`, `finished`, `updated` (official
+   ECMWF example). The client keeps only `status` (and `message` on a terminal
+   failure); the provider's `created`/`started`/`finished`/`updated`
+   **job-state timestamps are discarded** — a concrete, fixable gap.
+3. **Result-link issuance** — `GET …/jobs/{job_id}/results` returns asset
+   descriptors (`href`, `type`, `file:checksum`, `file:size`, `file:local_path`).
+   No timestamp is exposed on the asset itself, so there is no separate
+   "link issuance time"; the nearest provider instant is the job `finished`.
+4. **Artifact retrieval** — `GET {href}` (manual, token re-scoped redirects).
+   Full HTTP evidence is captured exactly as in §26.2, and `retrieved_utc`
+   records when the artifact bytes were requested.
+5. **Dataset vintage / observation time** — caller-supplied
+   `observation_start/end_utc` (e.g. ERA5-Land 2026-07-15T00:00Z); recorded.
+6. **Provider-issued availability time** — **not exposed anywhere in the CDS
+   request/asset flow.** The catalogue/catalog and Knowledge Base pages provide
+   only general schedule statements (§25.4). A job completing does not mean the
+   dataset vintage was "published" then; the CDS generates the requested subset
+   from the consolidated archive, which lags ~2 months by its own schedule.
+
+`acquire_cds` persists `provider_metadata = {dataset, job_id, asset_type}` today.
+Control-plane responses (submit/poll/results) carry no ledger record; only the
+final artifact GET is evidenced. Note also that `retrieved_utc` means "download
+start" on the success/download-failure branches but "acquisition start" on the
+submit-poll-results failure branches — a documented, minor meaning shift.
+
+### 26.4 Metadata semantics and limitations (what each field proves)
+
+- `Date` — instant the server generated the response (server clock). Proves the
+  server answered then; **not** dataset publication/availability.
+- `Last-Modified` — server-side last modification of the resource object; usually
+  the object's mtime for a static file. A **server-evidenced bound**
+  ("resource in this state no later than its mtime"), not a provider *declared*
+  availability time.
+- `ETag` — opaque validator; no time semantics; supports conditional GET/dedupe.
+- `Content-Length` — response-body byte count; evidence for size/truncation
+  cross-check; no time semantics. **Not enforced** this phase (recorded only).
+- `retrieved_utc` vs `observation_*` vs `available_utc` — three distinct
+  instants; the schema never conflates them and headers are never promoted into
+  `available_utc` (test-verified, §19/§26.8).
+
+Limitation to state plainly: even perfect HTTP capture gives **server-side
+bounds**, not a provider *declaration* of availability. Under the §23 policy,
+`provider_issued` stays reserved for independently supported provider evidence
+(an explicit catalog field or an official cadence statement pinned to the exact
+vintage). A captured `Last-Modified`/directory mtime would upgrade the current
+records from "no evidence" to a *derived, server-evidenced bound* — strictly
+better, but still not `provider_issued`. This phase does not weaken that policy.
+
+### 26.5 Trustworthy dated directory/catalog record — feasibility
+
+For a **future** CHIRPS download, a dated index (e.g.
+`data.chc.ucsb.edu/products/CHIRPS-2.0/…/daily/tifs/2026/`) is fetchable by the
+existing transport, and per-file `Last-Modified`/`Date` could be parsed into an
+explicit evidence label. But the rig has no secondary-evidence persistence today
+(`provider_metadata` is a bounded, sanitised string map, unsuitable for an HTML
+body), so this capability needs a small implementation (index fetch + parse +
+persist under an explicit, labelled field). It is **feasible for new
+acquisitions, not repairable retrospectively**: the existing CHIRPS
+2026-08-31 artifact's server-side metadata was never captured, and a re-download
+would evidence only the file's then-current state (§25).
+
+### 26.6 Schema & policy review — smallest backward-compatible design
+
+**Schema adequacy:** existing fields already separate `retrieved_utc`,
+`acquired_utc`, `observation_start/end_utc` and `available_utc`, plus
+`availability_classification` (`provider_issued`/`derived`/`unknown`) with
+`availability_source`/`availability_derivation`. No new field is required to
+represent any timestamp this path exposes; the CDS job-state times belong in
+`provider_metadata` with explicit `cds_job_*` labels. No manifest contract bump
+is needed or made (`1.1.0` unchanged). The one residual risk is caller
+truthfulness (a caller could pass a fabricated `available_utc` with a bogus
+classification); that is mitigated, not eliminated, by the Phase 3.7.4B
+availability-policy gate, which rejects `available_utc is None` under both
+policies and requires `provider_issued` for `production`.
+
+**Change applied (backward compatible):** `Content-Length` added to
+`ALLOWLISTED_RESPONSE_HEADERS` in `backend/app/schemas/acquisition.py`
+(`last-modified`, `etag`, `date`, `content-length`). Compatibility: records
+already carry optional `response_headers: dict[str, str]`; adding an allowlisted
+name only lets new records include one more key. Legacy records load unchanged;
+the JSON manifest shape and the feature contract (`1.0.0`) are untouched.
+
+**Smallest design proposed, not implemented:** CDS job-state timestamp capture.
+Keep `poll()`/`wait_for_success()` return contracts; add a capture that reads the
+provider job status fields (`created`/`started`/`finished`/`updated`) and
+persists them as `provider_metadata["cds_job_created_utc"]` (etc.), always
+labelled as job-state times, validated as aware datetimes when parseable and
+otherwise stored verbatim with a note. Never written to `available_utc`, never
+classified `provider_issued`. The `201` submission response should likewise
+yield a submit-time stamp. This requires enriching `FakeCds` and verifying the
+exact field names once against the live API before implementation.
+
+### 26.7 Fixable vs not fixable retroactively
+
+Fixable **for future downloads** (no code change needed or minimal):
+- `Content-Length` capture — fixed this phase (§26.6).
+- CDS job-state timestamps — proposed design ready (§26.6); needs live field
+  verification before coding.
+- CHIRPS dated directory/catalog record — small implementation (§26.5).
+- Any future artifact gets full HTTP evidence + `retrieved_utc` automatically.
+
+Not repairable **from repository evidence**:
+- The committed CHIRPS 2026-08-31 and ERA5-Land 2026-07-15 artifacts carry no
+  provider HTTP metadata and no CDS job-state timestamps (all evidence fields
+  `null` in the manifest, re-verified 3.7.5A). Neither `available_utc` can be
+  turned into a provider-issued timestamp retroactively; Q6/Q7 remain
+  `EXTERNAL_EVIDENCE_REQUIRED` and production stays **NO-GO**.
+
+### 26.8 Verification
+
+- Focused: `python -m pytest -o addopts="" tests/test_acquisition_rig.py
+  tests/test_cds_acquisition.py` → **132 passed** (was 129; +3).
+- Full backend: `python -m pytest -o addopts=""` → **328 passed** (was 325; +3),
+  same 3 benign pre-existing `sklearn InconsistentVersionWarning`.
+- Secret scan: 117 files / 4 `.env` values → 0 hits (unchanged).
+- `git diff --check` → exit 0. HEAD stays `7a4afbe`; no commit/push.
+- Manifest hash/blob/contract unchanged: blob `07dc2cdd…`, SHA-256
+  `1f2b9434…`, `contract_version 1.1.0`.
+
+### 26.9 Files changed this phase
+
+- `backend/app/schemas/acquisition.py` — allowlist now includes `content-length`.
+- `backend/tests/test_acquisition_rig.py` — 2 new offline tests (Content-Length
+  captured; headers never become availability).
+- `backend/tests/test_cds_acquisition.py` — 1 new offline test (CDS artifact GET
+  captures Content-Length; still not availability).
+- `docs/historical-data-coverage.md` — this section.
+
+### 26.10 Recommended next implementation step
+
+Implement the CDS **job-state timestamp capture** (§26.6), verified against the
+live API field names first, followed by the CHIRPS dated directory-index capture
+(§26.5) before the next CHIRPS download. Both are forward-only: they improve
+future records and cannot backfill Q6/Q7 for the two committed artifacts.
+
+### 26.11 Verdict
+
+Future acquisitions can now capture trustworthy acquisition-time evidence:
+full artifact HTTP metadata on both sources, explicit `retrieved_utc`, content
+SHA-256, and caller/rule-accountable availability classification — with
+`Content-Length` newly included. The CDS control plane still discards the
+provider's job-state timestamps (fixable, §26.6). None of this fabricates
+historical publication times: the two committed artifacts remain
+`EXTERNAL_EVIDENCE_REQUIRED`, production remains **NO-GO**, production-grade
+temporal features remain `NEEDS_EVIDENCE`, and `provider_issued` remains
+reserved for independently supported provider evidence.
+
+## 27. Phase 3.7.5C — CDS job-state lifecycle evidence capture
+
+Implements §26.6 (CDS job-state timestamp capture): future ERA5-Land
+acquisitions now persist the provider's CDS job-state fields
+(`status`, `created`, `started`, `finished`, `updated`) as auditable
+**acquisition-process evidence** in `provider_metadata`. The change is
+forward-only and fully backward-compatible; it cannot backfill Q6/Q7 for the
+two committed artifacts. **No commit / push; the manifest, feature contract
+and availability registers are untouched.**
+
+### 27.1 Scope and method
+
+- Starting checkpoint: HEAD `7a4afbe` with only §25/§26 documentation and the
+  3.7.5B code/tests applied. §§19–26 are preserved verbatim.
+- Inspected: `backend/app/services/cds.py`, `backend/app/services/acquisition.py`,
+  `backend/app/redaction.py`, `backend/app/schemas/acquisition.py`,
+  `backend/tests/test_cds_acquisition.py`, documentation §§19–26.
+- Official CDS job-status field names (`status`, `message`, `created`, `started`,
+  `finished`, `updated`) are taken from the ECMWF API documentation, not a live
+  request. All tests are offline/synthetic; no live provider access anywhere.
+- No evidence is invented for the existing 2026-08-31 / 2026-07-15 artifacts;
+  job-state fields are recorded only as returned by the provider, verbatim.
+
+### 27.2 What is captured
+
+A whitelist helper `job_evidence(payload, *, prefix)` selects exactly five
+fields from a CDS job payload: the scalar `status` plus the four job-state
+timestamps `created` / `started` / `finished` / `updated`. It emits keys of the
+form `cds_{prefix}_{field}` (`prefix` is `submit` for the 201 creation response
+and `poll` for the terminal status GET) with the raw string value kept exactly
+as the provider returned it — no parsing, no timezone reinterpretation, no
+synthesis. Every other field (`jobID`, `processID`, `links`, `href`, `message`,
+signed URLs, credentials) is dropped at the whitelist boundary so a secret can
+never enter the ledger through this channel; values are still bounded (512
+chars) and control-stripped by the shared redaction layer as defence in depth.
+
+### 27.3 Per-field semantics
+
+| Ledger key | CDS field | Meaning recorded |
+| ---------- | --------- | ---------------- |
+| `cds_submit_status` / `cds_poll_status` | `status` | workflow state at that instant (submit: usually `accepted`; poll: the terminal `successful`) |
+| `cds_submit_created` / `cds_poll_created` | `created` | provider-side creation time of the job-state record |
+| `cds_submit_started` / `cds_poll_started` | `started` | provider-side start of execution |
+| `cds_submit_updated` / `cds_poll_updated` | `updated` | provider-side last update of the job-state record |
+| `cds_poll_finished` | `finished` | provider-side terminal instant (meaningful only on the terminal GET) |
+
+Fields the provider does not return at a given phase are simply absent: the
+201 submission response typically has no `finished`, so
+`cds_submit_finished` will not appear. Records only what was actually returned.
+
+### 27.4 What the timestamps are NOT
+
+Job-state timestamps describe the **retrieval workflow**: when the CDS created,
+ran, updated and finished our *job*. They are not dataset vintage, not
+publication time, and not availability. To forbid misreading, every
+`provider_metadata` block from this phase carries a
+`cds_lifecycle_note` stating exactly that, and the values are deliberately
+kept as raw strings rather than parsed datetimes so they cannot be fed into
+`available_utc`, `observation_start/end_utc` or `provider_issued` by accident.
+The existing `available_utc / availability_*` and `observation_start/end_utc`
+fields remain caller/rule-supplied and untouched.
+
+### 27.5 Backward compatibility
+
+- `submit(process_id, inputs) -> str` returns the bare job id, as before
+  (delegates to `submit_with_evidence()`).
+- `poll(job_id) -> (status, message)` and `wait_for_success(job_id)` are
+  unchanged in signature and behaviour (poll delegates to `_poll_payload()`).
+- New surface: `CdsSubmission` frozen dataclass (`job_id` + `evidence`);
+  `submit_with_evidence()`; `poll_evidence(job_id)`; `job_evidence()`.
+- Adding `submit_with_evidence` / `poll_evidence` to the transport extends the
+  injected interface; the test double mirrors it.
+
+### 27.6 Driver integration (`acquire_cds`)
+
+1. `transport.submit_with_evidence(dataset, inputs)` replaces the bare submit;
+   the job id drives the unchanged poll/download/checksum/dedupe flow and the
+   submission evidence is carried forward.
+2. After `wait_for_success`, exactly **one extra terminal status GET**
+   (`transport.poll_evidence(job_id)`) captures the terminal job-state fields
+   the poll loop discards. If that GET fails, the acquisition fails honestly as
+   `failed` with `source_record_id = job_id` (never fabricated evidence).
+3. `submit_evidence` and `poll_evidence` are merged into `provider_metadata`
+   beside `dataset` / `job_id` / `asset_type`, plus the `cds_lifecycle_note`.
+4. Evidence is persisted on `downloaded` and `skipped_existing` records.
+   `failed` records carry no `provider_metadata` (unchanged behaviour);
+   `checksum_mismatch` records likewise remain without it.
+
+### 27.7 Schema / serialization compatibility
+
+No schema field was added. Everything lives in the existing
+`provider_metadata: dict[str, str]`, which the record sanitizer already bounds
+and de-secrets before commit. Manifest `contract_version` stays `1.1.0`,
+feature contract stays `1.0.0`, and the committed manifest (`6` records,
+blob `07dc2cdd…`, SHA-256 `1f2b9434…`) is byte-identical.
+
+### 27.8 Tests added and results
+
+Ten new offline tests in `backend/tests/test_cds_acquisition.py`:
+
+- `job_evidence` whitelists exactly the five job-state fields (poll payload);
+- missing / non-string / non-whitelisted (credential-bearing) fields are
+  dropped;
+- values are bounded (2000-char status → 512);
+- `submit_with_evidence` returns `CdsSubmission` and stays backward compatible
+  with `submit()`; non-object 201 payload → `CdsMalformedResponse`;
+- `poll_evidence` captures the terminal job state verbatim; `poll()` unchanged;
+  non-object status body → `CdsMalformedResponse`;
+- `acquire_cds` persists submit+poll lifecycle evidence with exactly one extra
+  terminal GET, and never promotes it to availability fields;
+- evidence-GET failure → honest `failed` record;
+- `skipped_existing` keeps lifecycle evidence.
+
+The suite caught a real integration bug during development: the `FakeCds`
+attribute `poll_evidence` shadowed its `poll_evidence` method, producing
+`TypeError: 'dict' object is not callable` across 17 tests; renamed the
+attribute and all tests pass.
+
+Test results: focused `tests/test_cds_acquisition.py`
+`tests/test_acquisition_rig.py` → **142 passed** (+10); full backend suite →
+**338 passed** (+10).
+
+### 27.9 Verification
+
+- `git diff --check` — exit 0 (docs are a pure append; code diff reviewed).
+- Secret scan `secret_scan.py` — 117 files / 4 `.env` scanned, **hits = 0**.
+- Manifest re-verified — `contract_version 1.1.0`, 6 records (CHIRPS 1×
+  downloaded; ERA5-Land 5 records, 1× downloaded + 4× failed), blob and SHA-256
+  unchanged.
+- Availability registers unchanged: both committed artifacts remain
+  `EXTERNAL_EVIDENCE_REQUIRED`; production remains **NO-GO**; production-grade
+  temporal features remain `NEEDS_EVIDENCE`.
+- HEAD `7a4afbe`; **no commit, no push**.
+
+### 27.10 Files changed
+
+- `backend/app/services/cds.py` — `submit`/`poll` refactor behind
+  `submit_with_evidence` / `_poll_payload`; new `CdsSubmission`,
+  `job_evidence`, `poll_evidence`, whitelist constants; `isinstance(dict)`
+  payload guards; module docstring updated.
+- `backend/app/services/acquisition.py` — `acquire_cds` lifecycle-evidence
+  wiring (submit evidence, one extra terminal GET, `provider_metadata` merge,
+  `cds_lifecycle_note`).
+- `backend/tests/test_cds_acquisition.py` — `FakeCds` extended
+  (`submit_with_evidence`, `poll_evidence`, evidence params) + 10 new tests.
+- `docs/historical-data-coverage.md` — this section.
+
+### 27.11 Verdict
+
+Future ERA5-Land acquisitions now persist the full CDS retrieval-workflow
+timeline as bounded, de-secreted, verbatim acquisition-process evidence, with
+an explicit note that these are job-state timestamps rather than availability.
+ERF 3.7.5 (capture trustworthy future acquisition evidence) is complete. Q7
+remains `EXTERNAL_EVIDENCE_REQUIRED`: job timestamps answer *when our job ran*,
+not *when the dataset vintage became available*, so the two committed ERA5-Land
+artifacts are still unsupported. Preferred next step (unchanged from §26.5):
+CHIRPS dated directory/index catalog capture before the next CHIRPS download.

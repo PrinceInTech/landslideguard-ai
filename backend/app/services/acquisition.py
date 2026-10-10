@@ -1030,15 +1030,27 @@ class AcquisitionDriver:
 
         # 1. Submit the execution.
         try:
-            job_id = transport.submit(dataset, dict(inputs))
+            submission = transport.submit_with_evidence(dataset, dict(inputs))
         except Exception as exc:
             error = _sanitize_error(exc)
             fail(AcquisitionStatus.FAILED, error=error, rec_id=source_record_id)
             raise AcquisitionError(f"{source.name}: {error}") from exc
+        job_id = submission.job_id
+        submit_evidence = submission.evidence
 
         # 2. Poll until the job finishes (or the waiting budget is exhausted).
         try:
             _status, _message = transport.wait_for_success(job_id)
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 2b. One extra terminal status GET: the poll loop's ``(status, message)``
+        # discards the job-state timestamps, so capture them as auditable
+        # acquisition-process evidence before proceeding. Never fabricated.
+        try:
+            poll_evidence = transport.poll_evidence(job_id)
         except Exception as exc:
             error = _sanitize_error(exc)
             fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
@@ -1102,6 +1114,15 @@ class AcquisitionDriver:
         asset_type = asset.get("type")
         if isinstance(asset_type, str) and asset_type:
             provider_metadata["asset_type"] = asset_type
+        if submit_evidence:
+            provider_metadata.update(submit_evidence)
+        if poll_evidence:
+            provider_metadata.update(poll_evidence)
+        provider_metadata["cds_lifecycle_note"] = (
+            "cds_submit_*/cds_poll_* are CDS retrieval-workflow job-state timestamps, "
+            "recorded verbatim as acquisition-process evidence; they are not dataset "
+            "vintage or availability evidence."
+        )
         evidence = dict(
             request_url=request_url,
             request_method="GET",

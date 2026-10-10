@@ -677,6 +677,60 @@ def test_fetch_captures_allowlisted_headers_only(tmp_path):
     assert "authorization" not in blob.lower()
 
 
+def test_content_length_header_captured_when_provided(tmp_path):
+    """3.7.5B: Content-Length is allowlisted evidence (byte-count cross-check).
+
+    Synthetic fixture: the fake provider sends Content-Length on the final
+    response; the rig keeps it under the allowlisted ``content-length`` key
+    alongside the other non-secret response evidence.
+    """
+    url = "https://chc.example/data.nc"
+    payload = b"payload-bytes"
+    fake = FakeTransport(
+        bytes_map={url: payload},
+        headers_map={url: {"Content-Length": str(len(payload)), "ETag": '"abc"'}},
+    )
+    driver = _chirps_driver(tmp_path, fake)
+    record = driver.acquire(acquisition_key="k1", retrieval_params={"url": url})
+
+    assert record.response_headers == {
+        "content-length": str(len(payload)),
+        "etag": '"abc"',
+    }
+    assert record.file_size_bytes == len(payload)
+    assert record.available_utc is None
+    assert record.availability_classification == "unknown"
+
+
+def test_http_headers_never_become_availability_time(tmp_path):
+    """3.7.5B: Date/Last-Modified/Content-Length are evidence, never available_utc.
+
+    The value of ``available_utc`` must always come from an explicit caller/rule
+    classification, never from wire headers. Captured headers stay in
+    ``response_headers`` and leave ``availability_*`` unset.
+    """
+    url = "https://chc.example/data.nc"
+    fake = FakeTransport(
+        bytes_map={url: b"payload"},
+        headers_map={
+            url: {
+                "Content-Length": "7",
+                "Last-Modified": "Wed, 02 Sep 2026 00:00:00 GMT",
+                "Date": "Fri, 11 Sep 2026 21:10:59 GMT",
+            }
+        },
+    )
+    driver = _chirps_driver(tmp_path, fake)
+    record = driver.acquire(acquisition_key="k1", retrieval_params={"url": url})
+
+    assert record.response_headers["date"] == "Fri, 11 Sep 2026 21:10:59 GMT"
+    assert record.response_headers["last-modified"] == "Wed, 02 Sep 2026 00:00:00 GMT"
+    assert record.response_headers["content-length"] == "7"
+    assert record.available_utc is None
+    assert record.availability_classification == "unknown"
+    assert record.availability_source is None and record.availability_derivation is None
+
+
 def test_provider_omitted_availability_headers_stay_unknown(tmp_path):
     url = "https://chc.example/data.nc"
     fake = FakeTransport(bytes_map={url: b"payload"})

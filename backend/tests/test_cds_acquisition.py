@@ -30,9 +30,11 @@ from app.services.cds import (
     CdsError,
     CdsJobFailed,
     CdsMalformedResponse,
+    CdsSubmission,
     CdsTimeout,
     CdsTransport,
     asset_extension,
+    job_evidence,
     provider_sha256,
 )
 
@@ -76,9 +78,12 @@ class FakeCds:
         poll_error=None,
         results_error=None,
         download_error=None,
+        poll_evidence_error=None,
         download_headers=None,
         download_final_url=None,
         download_redirect_chain=(),
+        submit_evidence=None,
+        poll_evidence=None,
     ):
         self.job_id = job_id
         self.poll_status = poll_status
@@ -96,25 +101,40 @@ class FakeCds:
         self.poll_error = poll_error
         self.results_error = results_error
         self.download_error = download_error
+        self.poll_evidence_error = poll_evidence_error
         self.download_headers = download_headers
         self.download_final_url = download_final_url
         self.download_redirect_chain = tuple(download_redirect_chain)
+        self.submit_evidence = dict(submit_evidence or {})
+        self.poll_evidence_data = dict(poll_evidence or {})
         self.submits = []
         self.polls = []
         self.results_calls = []
         self.downloads = []
+        self.poll_evidence_calls = []
 
     def submit(self, dataset, inputs):
+        return self.submit_with_evidence(dataset, inputs).job_id
+
+    def submit_with_evidence(self, dataset, inputs):
         self.submits.append((dataset, inputs))
         if self.submit_error:
             raise self.submit_error
-        return self.job_id
+        return cds_service.CdsSubmission(
+            job_id=self.job_id, evidence=dict(self.submit_evidence)
+        )
 
     def wait_for_success(self, job_id):
         self.polls.append(job_id)
         if self.poll_error:
             raise self.poll_error
         return self.poll_status, "ok"
+
+    def poll_evidence(self, job_id):
+        self.poll_evidence_calls.append(job_id)
+        if self.poll_evidence_error:
+            raise self.poll_evidence_error
+        return dict(self.poll_evidence_data)
 
     def results(self, job_id):
         self.results_calls.append(job_id)
@@ -711,10 +731,18 @@ def test_acquire_cds_records_download_evidence(tmp_path, monkeypatch):
     assert "sig" in (record.redacted_params or [])
     assert "FINALSECRET" not in (record.final_url or "")
     assert "HOPSECRET" not in "".join(record.redirect_chain or [])
-    assert record.provider_metadata == {
-        "dataset": DATASET,
-        "job_id": "job-123",
-        "asset_type": "application/x-netcdf",
+    assert record.provider_metadata["dataset"] == DATASET
+    assert record.provider_metadata["job_id"] == "job-123"
+    assert record.provider_metadata["asset_type"] == "application/x-netcdf"
+    assert record.provider_metadata["cds_lifecycle_note"].startswith(
+        "cds_submit_*/cds_poll_* are CDS retrieval-workflow job-state timestamps"
+    )
+    assert "cds_submit_started" not in record.provider_metadata
+    assert set(record.provider_metadata) == {
+        "dataset",
+        "job_id",
+        "asset_type",
+        "cds_lifecycle_note",
     }
     blob = load_acquisition_manifest(manifest_path).model_dump_json()
     for secret in ("SECRETCOOKIE", "SECRETTOKEN", "FINALSECRET", "HOPSECRET", FAKE_KEY):
@@ -821,6 +849,32 @@ def test_acquire_cds_available_utc_not_derived_from_headers(tmp_path, monkeypatc
     assert record.availability_classification is None
     assert record.response_headers.get("date") == "Wed, 01 Oct 2026 12:00:00 GMT"
     assert record.response_headers.get("last-modified") == "Wed, 01 Oct 2026 00:00:00 GMT"
+
+
+def test_acquire_cds_captures_content_length_header(tmp_path, monkeypatch):
+    """3.7.5B: Content-Length is allowlisted evidence on the CDS artifact GET.
+
+    Synthetic fixture: the artifact download response includes Content-Length
+    and Last-Modified; both are persisted under the allowlisted keys, and the
+    header is never promoted into ``available_utc``.
+    """
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    fake = FakeCds(
+        download_headers={
+            "Content-Length": "5120",
+            "Last-Modified": "Wed, 01 Oct 2026 00:00:00 GMT",
+        }
+    )
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    assert record.response_headers == {
+        "content-length": "5120",
+        "last-modified": "Wed, 01 Oct 2026 00:00:00 GMT",
+    }
+    assert record.file_size_bytes == len(fake.payload)
+    assert record.available_utc is None
+    assert record.availability_classification is None
 
 
 def test_acquire_cds_artifact_bytes_sha_size_identical(tmp_path, monkeypatch):
@@ -989,3 +1043,200 @@ def test_trusted_origin_empty_base_path():
     assert transport._is_trusted_url("https://cds.example.invalid") is True
     assert transport._is_trusted_url("https://cds.example.invalid.evil/api") is False
     assert transport._is_trusted_url("http://cds.example.invalid/x") is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.7.5C -- CDS job-state lifecycle evidence
+# ---------------------------------------------------------------------------
+
+
+def test_job_evidence_whitelists_job_state_fields():
+    payload = {
+        "jobID": "job-1",
+        "processID": "reanalysis-era5-land",
+        "status": "successful",
+        "message": "request completed",
+        "created": "2026-10-08T10:00:00Z",
+        "started": "2026-10-08T10:00:01Z",
+        "finished": "2026-10-08T10:00:09Z",
+        "updated": "2026-10-08T10:00:09Z",
+        "links": [
+            {"rel": "self", "href": "https://cds.example.invalid/jobs/job-1?token=SECRET"}
+        ],
+        "href": "https://cds.example.invalid/results.nc?jwt=SECRET",
+    }
+    ev = job_evidence(payload, prefix="poll")
+    assert ev == {
+        "cds_poll_status": "successful",
+        "cds_poll_created": "2026-10-08T10:00:00Z",
+        "cds_poll_started": "2026-10-08T10:00:01Z",
+        "cds_poll_finished": "2026-10-08T10:00:09Z",
+        "cds_poll_updated": "2026-10-08T10:00:09Z",
+    }
+
+
+def test_job_evidence_omits_missing_nonstring_and_non_whitelisted_fields():
+    payload = {
+        "status": "running",
+        "created": None,
+        "started": 123456,
+        "finished": "",
+        "updated": "2026-10-08T10:05:00Z",
+        "auth": "SUPERSECRET",
+        "X-Amz-Signature": "ZZZ",
+    }
+    ev = job_evidence(payload, prefix="submit")
+    assert ev == {
+        "cds_submit_status": "running",
+        "cds_submit_updated": "2026-10-08T10:05:00Z",
+    }
+
+
+def test_job_evidence_bounds_values():
+    payload = {"status": "x" * 2000, "created": "2026-10-08T10:00:00Z"}
+    ev = job_evidence(payload, prefix="poll")
+    assert ev["cds_poll_status"] == "x" * 512
+    assert ev["cds_poll_created"] == "2026-10-08T10:00:00Z"
+
+
+def test_submit_with_evidence_returns_job_id_and_evidence(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    captured = _fake_post(
+        monkeypatch,
+        lambda c: _Response(
+            201,
+            {
+                "jobID": "job-1",
+                "processID": DATASET,
+                "status": "accepted",
+                "message": "accepted",
+                "created": "2026-10-08T10:00:00Z",
+                "started": "2026-10-08T10:00:01Z",
+                "updated": "2026-10-08T10:00:02Z",
+            },
+        ),
+    )
+    submission = transport.submit_with_evidence(DATASET, INPUTS)
+    assert isinstance(submission, CdsSubmission)
+    assert submission.job_id == "job-1"
+    assert submission.evidence["cds_submit_status"] == "accepted"
+    assert submission.evidence["cds_submit_created"] == "2026-10-08T10:00:00Z"
+    assert "cds_submit_finished" not in submission.evidence
+    assert captured["allow_redirects"] is False
+    assert transport.submit(DATASET, INPUTS) == "job-1"
+
+
+def test_submit_with_evidence_rejects_non_object_payload(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    _fake_post(monkeypatch, lambda c: _Response(201, ["not", "an", "object"]))
+    with pytest.raises(CdsMalformedResponse):
+        transport.submit_with_evidence(DATASET, INPUTS)
+
+
+def test_poll_evidence_captures_terminal_job_state(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    _fake_get(
+        monkeypatch,
+        {
+            f"{FAKE_URL}/retrieve/v1/jobs/job-1": _Response(
+                200,
+                {
+                    "jobID": "job-1",
+                    "status": "successful",
+                    "message": "request completed",
+                    "created": "2026-10-08T10:00:00Z",
+                    "started": "2026-10-08T10:00:01Z",
+                    "finished": "2026-10-08T10:00:09Z",
+                    "updated": "2026-10-08T10:00:09Z",
+                },
+            ),
+        },
+    )
+    assert transport.poll("job-1") == ("successful", "request completed")
+    assert transport.poll_evidence("job-1") == {
+        "cds_poll_status": "successful",
+        "cds_poll_created": "2026-10-08T10:00:00Z",
+        "cds_poll_started": "2026-10-08T10:00:01Z",
+        "cds_poll_finished": "2026-10-08T10:00:09Z",
+        "cds_poll_updated": "2026-10-08T10:00:09Z",
+    }
+
+
+def test_poll_evidence_rejects_non_object_payload(monkeypatch):
+    transport = CdsTransport(api_url=FAKE_URL, api_key=FAKE_KEY)
+    _fake_get(monkeypatch, {f"{FAKE_URL}/retrieve/v1/jobs/job-1": _Response(200, 42)})
+    with pytest.raises(CdsMalformedResponse):
+        transport.poll_evidence("job-1")
+
+
+def test_acquire_cds_persists_job_lifecycle_evidence(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    fake = FakeCds(
+        submit_evidence={
+            "cds_submit_status": "accepted",
+            "cds_submit_created": "2026-10-08T10:00:00Z",
+            "cds_submit_started": "2026-10-08T10:00:01Z",
+        },
+        poll_evidence={
+            "cds_poll_status": "successful",
+            "cds_poll_created": "2026-10-08T10:00:00Z",
+            "cds_poll_started": "2026-10-08T10:00:01Z",
+            "cds_poll_finished": "2026-10-08T10:00:09Z",
+            "cds_poll_updated": "2026-10-08T10:00:09Z",
+        },
+    )
+    record = driver.acquire_cds(
+        dataset=DATASET, inputs=INPUTS, acquisition_key="2026-07-15t0000", cds=fake
+    )
+    meta = record.provider_metadata
+    assert meta["cds_submit_status"] == "accepted"
+    assert meta["cds_submit_created"] == "2026-10-08T10:00:00Z"
+    assert meta["cds_poll_status"] == "successful"
+    assert meta["cds_poll_finished"] == "2026-10-08T10:00:09Z"
+    assert meta["cds_poll_updated"] == "2026-10-08T10:00:09Z"
+    assert meta["cds_lifecycle_note"].startswith("cds_submit_*/cds_poll_*")
+    assert record.available_utc is None
+    assert record.availability_classification is None
+    assert record.observation_start_utc is None
+    assert record.observation_end_utc is None
+    assert fake.poll_evidence_calls == [fake.job_id]
+
+
+def test_acquire_cds_fails_honestly_when_job_evidence_get_fails(tmp_path, monkeypatch):
+    driver, raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    fake = FakeCds(poll_evidence_error=CdsApiError("CDS job status GET failed"))
+    with pytest.raises(AcquisitionError):
+        driver.acquire_cds(dataset=DATASET, inputs=INPUTS, cds=fake)
+    failures = _failures_in(load_acquisition_manifest(manifest_path))
+    assert len(failures) == 1
+    assert failures[0].source_record_id == "job-123"
+    assert failures[0].storage_path is None
+    assert list(raw_root.rglob("*")) == []
+
+
+def test_acquire_cds_skipped_existing_keeps_lifecycle_evidence(tmp_path, monkeypatch):
+    driver, _raw_root, manifest_path = _driver(tmp_path, monkeypatch)
+    first = driver.acquire_cds(
+        dataset=DATASET,
+        inputs=INPUTS,
+        acquisition_key="a1",
+        cds=FakeCds(
+            job_id="job-1",
+            submit_evidence={"cds_submit_status": "accepted"},
+            poll_evidence={"cds_poll_status": "successful"},
+        ),
+    )
+    second = driver.acquire_cds(
+        dataset=DATASET,
+        inputs=INPUTS,
+        acquisition_key="a2",
+        cds=FakeCds(
+            job_id="job-2",
+            submit_evidence={"cds_submit_status": "accepted"},
+            poll_evidence={},
+        ),
+    )
+    assert second.status == "skipped_existing"
+    assert second.provider_metadata["cds_submit_status"] == "accepted"
+    assert "cds_poll_status" not in second.provider_metadata
+    assert first.provider_metadata["cds_poll_status"] == "successful"

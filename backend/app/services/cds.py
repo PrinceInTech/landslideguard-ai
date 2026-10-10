@@ -13,18 +13,27 @@ Official endpoints (verified live on the CDS on 2026-10-08):
     GET  {base}/retrieve/v1/jobs/{job_id}/results     -> {asset: {...}} assets
     GET  {href}                                       -> artifact bytes
 
+Job-state evidence: the 201 submission response and each job-status GET both
+carry `status` plus the job-state timestamps `created`, `started`, `finished`
+and `updated`. Those are retrieval-workflow timestamps, not dataset
+vintage/availability, and are kept verbatim (raw strings) by the
+job-state-evidence helpers so they can never be mistaken for availability
+evidence in the ledger.
+
 Authentication: the Personal Access Token is sent as the PRIVATE-TOKEN header
 (as declared in the public OpenAPI at ``{base}/retrieve/v1/openapi.json``).
 """
 
 import posixpath
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import unquote, urljoin, urlsplit
 
 import requests
+
+from app.redaction import bound_string
 
 #: Job statuses that will never transition again.
 TERMINAL_STATUSES = frozenset({"successful", "failed", "dismissed", "aborted", "cancelled"})
@@ -151,6 +160,47 @@ def asset_extension(asset: dict) -> str:
     return ".bin"
 
 
+#: The single scalar job-state signal kept from a CDS job payload.
+_JOB_SCALAR_FIELDS = ("status",)
+#: Job-state timestamps (official CDS field names) preserved verbatim from a
+#: CDS job payload. They describe the retrieval workflow lifecycle -- when the
+#: submission was created and when the processing started/finished/updated --
+#: never the vintage or availability of the underlying dataset. Every value is
+#: kept exactly as the provider returned it (raw string, no timezone
+#: reinterpretation), so they can never be mistaken for availability evidence.
+_JOB_TIMING_FIELDS = ("created", "started", "finished", "updated")
+
+
+def job_evidence(payload: dict, *, prefix: str) -> dict[str, str]:
+    """Whitelist the auditable job-state fields of a CDS job payload.
+
+    Keeps ``status`` and the four job-state timestamps verbatim under the keys
+    ``cds_{prefix}_{field}``, bounded like any other provider-controlled input.
+    Everything else in the payload -- ``jobID``, ``processID``, ``links``,
+    ``href``, ``message``, signed URLs, tokens -- is dropped so a secret can
+    never reach the ledger through the evidence channel. Fields that are absent
+    or not strings are simply omitted (never synthesized).
+    """
+    evidence: dict[str, str] = {}
+    for name in _JOB_SCALAR_FIELDS + _JOB_TIMING_FIELDS:
+        value = payload.get(name)
+        if isinstance(value, str) and value:
+            evidence[f"cds_{prefix}_{name}"] = bound_string(value)
+    return evidence
+
+
+@dataclass(frozen=True)
+class CdsSubmission:
+    """Outcome of a job submission: the job id plus auditable job evidence.
+
+    ``evidence`` holds the whitelisted job-state fields (see
+    :func:`job_evidence`) as raw strings; it is bounded but otherwise verbatim.
+    """
+
+    job_id: str
+    evidence: dict[str, str] = field(default_factory=dict)
+
+
 class CdsTransport:
     """Async job-oriented client for the CDS retrieve API (injectable).
 
@@ -246,6 +296,15 @@ class CdsTransport:
     def submit(self, process_id: str, inputs: dict) -> str:
         """Submit an execution and return its job id (201 -> jobID).
 
+        Backward-compatible wrapper: the actual work happens in
+        :meth:`submit_with_evidence`, which additionally captures the job-state
+        fields of the 201 response as auditable evidence.
+        """
+        return self.submit_with_evidence(process_id, inputs).job_id
+
+    def submit_with_evidence(self, process_id: str, inputs: dict) -> CdsSubmission:
+        """Submit an execution and return its job id plus job-state evidence.
+
         Redirects are rejected explicitly: the documented CDS endpoint issues
         none, and following one could forward ``PRIVATE-TOKEN`` to another
         origin (``requests`` strips only ``Authorization`` on a host change).
@@ -268,16 +327,27 @@ class CdsTransport:
             payload = response.json()
         except ValueError as exc:
             raise CdsMalformedResponse("CDS execution returned a non-JSON body") from exc
+        if not isinstance(payload, dict):
+            raise CdsMalformedResponse(f"CDS execution response is not a JSON object: {payload!r}")
         job_id = payload.get("jobID")
         if not isinstance(job_id, str) or not job_id:
             raise CdsMalformedResponse(f"CDS execution response has no jobID: {payload!r}")
-        return job_id
+        return CdsSubmission(job_id=job_id, evidence=job_evidence(payload, prefix="submit"))
 
     def poll(self, job_id: str) -> tuple[str, str | None]:
         """Return ``(status, message)`` for one job.
 
-        Redirects are rejected explicitly (see :meth:`submit`).
+        Redirects are rejected explicitly (see :meth:`submit_with_evidence`).
         """
+        payload = self._poll_payload(job_id)
+        status = payload.get("status")
+        if not isinstance(status, str) or not status:
+            raise CdsMalformedResponse(f"CDS job status has no status: {payload!r}")
+        message = payload.get("message")
+        return status, (message if isinstance(message, str) else None)
+
+    def _poll_payload(self, job_id: str) -> dict:
+        """Fetch and return the parsed JSON payload of one job status GET."""
         response = requests.get(
             f"{self._base}/jobs/{job_id}",
             headers=self._headers(),
@@ -292,11 +362,17 @@ class CdsTransport:
             payload = response.json()
         except ValueError as exc:
             raise CdsMalformedResponse("CDS job status returned a non-JSON body") from exc
-        status = payload.get("status")
-        if not isinstance(status, str) or not status:
-            raise CdsMalformedResponse(f"CDS job status has no status: {payload!r}")
-        message = payload.get("message")
-        return status, (message if isinstance(message, str) else None)
+        if not isinstance(payload, dict):
+            raise CdsMalformedResponse(f"CDS job status is not a JSON object: {payload!r}")
+        return payload
+
+    def poll_evidence(self, job_id: str) -> dict[str, str]:
+        """Fetch a job status GET and return its whitelisted job-state evidence.
+
+        Backward-compatible with :meth:`poll`; additionally captures the
+        job-state fields of the response verbatim (see :func:`job_evidence`).
+        """
+        return job_evidence(self._poll_payload(job_id), prefix="poll")
 
     def results(self, job_id: str) -> list[dict]:
         """Return the downloadable asset descriptors of a finished job.

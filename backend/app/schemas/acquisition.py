@@ -33,7 +33,7 @@ from app.schemas.provenance import GeographicCoverage, _validate_standard_checks
 #: The only response headers that may ever be persisted in the ledger. Matched
 #: case-insensitively and canonicalised to lower-case keys; anything else
 #: (Set-Cookie, Authorization, ...) is dropped before it can leak a secret.
-ALLOWLISTED_RESPONSE_HEADERS: tuple[str, ...] = ("last-modified", "etag", "date")
+ALLOWLISTED_RESPONSE_HEADERS: tuple[str, ...] = ("last-modified", "etag", "date", "content-length")
 
 
 class AcquisitionStatus(str, Enum):
