@@ -2658,3 +2658,922 @@ remains `EXTERNAL_EVIDENCE_REQUIRED`: job timestamps answer *when our job ran*,
 not *when the dataset vintage became available*, so the two committed ERA5-Land
 artifacts are still unsupported. Preferred next step (unchanged from §26.5):
 CHIRPS dated directory/index catalog capture before the next CHIRPS download.
+
+---
+
+## 28. Phase 3.7.6A — Historical availability evidence recovery audit
+
+Read-only audit phase: can file-specific historical availability evidence for
+the two committed artifacts be **recovered** (from the artifact bytes, provider
+metadata, or independently archived records), must it be **reacquired**, or is it
+left **unresolved**? Live introspection only; no downloads, no CDS job
+submissions, no commit/push. Manifest, feature contract, artifacts, and code are
+untouched; §§19–27 are preserved verbatim (this phase appended only).
+
+### 28.1 Scope and method
+
+- Starting checkpoint: HEAD `1fee198`, working tree clean (only this document
+  modified once §28 is appended).
+- Inspected this phase:
+  - local artifact bytes (gzip header, netCDF global attributes);
+  - the live CHC directory listing
+    `https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/`
+    (fetched 2026-10-10);
+  - Internet Archive Wayback CDX queries for the exact CHIRPS file URL, the
+    `2026/` directory, and the `data.chc.ucsb.edu` domain;
+  - two Internet Archive captures of the public CDS catalogue (STAC collection)
+    JSON for `reanalysis-era5-land` (2026-09-16 and 2026-09-23), retrieved with
+    the `id_` flag to obtain the original bytes.
+- Not inspected (do not claim): the CDS dataset HTML page behind the Wayback CDX
+  query (fetch timed out); any FEWS NET / NOAA / IRI mirrors (search provider
+  rate-limited); the **live** CDS catalogue (current state only adds nothing over
+  the archived captures and would be excluded by the current-server-metadata
+  caveat).
+- Guardrails held: no fabricated timestamps; no URL claimed inspected unless
+  actually inspected; current server metadata distinguished from historical
+  evidence; production temporal features stay `NEEDS_EVIDENCE`; production stays
+  **NO-GO**; no live downloads; no CDS job submissions.
+
+### 28.2 Q6 CHIRPS — recovered evidence
+
+| # | Source | Value | Type | Observed |
+| - | ------ | ----- | ---- | -------- |
+| 1 | Ledger `available_utc` (`acquisition_manifest.json:28`) | `2026-09-11T21:10:59Z` | committed literal, previously "unverified" | at acquisition |
+| 2 | Committed artifact gzip header (bytes held, immutable) | MTIME raw `1789161059` = **`2026-09-11T21:10:59Z`**; FLG bit 0x08 (FNAME) → original name `chirps-v2.0.2026.08.31.tif`; compressed size `10,288,665` B | provider-produced, artifact-embedded creation metadata (set by the provider's compression tool at production) | read from artifact this phase (not filesystem mtime of our copy, which is `2026-10-08`) |
+| 3 | CHC live directory listing of `.../tifs/p05/2026/` | `chirps-v2.0.2026.08.31.tif.gz` `9.8 MiB` `2026-Sep-11 21:10`; the entire August-2026 batch (`08.01`–`08.31`) shares the same mtime `2026-Sep-11 21:10` | provider-issued per-file directory-listing timestamp (= the server-side file mtime §7A identified as acceptable evidence) | fetched 2026-10-10 |
+| 4 | Wayback CDX | no captures of the exact file URL, of `.../p05/2026/`, or of any dated CHIRPS `.tif.gz` listing | negative result | queried this phase |
+
+Interpretation. The ledger value is now **reproducible from the artifact itself**
+(§7A premise "no derivation is recoverable from the repository" is superseded:
+the derivation *source* is inside the committed bytes) and is independently
+corroborated to the second by the provider's own directory listing for the exact
+file. The mtime agreeing with our artifact's gzip MTIME also means the provider
+file has **not** been re-touched since `2026-09-11T21:10:59Z` (else the on-disk
+mtime would diverge from the mtime embedded in the bytes we hold). The whole
+month-published-at-once pattern (`08.01–08.31` one mtime) matches CHC's
+monthly-batch publication cadence noted in `acquisition_manifest.json:369`.
+
+Caveats, stated honestly:
+- The directory listing was observed **post-hoc** (`2026-10-10`), not at
+  retrieval (`2026-10-08`); its Date column has minute granularity.
+- The gzip MTIME is a *production* timestamp (compression time). Publication
+  normally follows immediately for a batch-generated product, and the mtime is
+  the standard web-server `Last-Modified`-equivalent, but a strict reading keeps
+  "production instant" distinct from "serving/published instant".
+- No independent third-party (Wayback) capture of the CHIRPS file exists; CHC
+  itself is the authoritative provider, and the listing is that provider.
+- A theoretical future re-upload that *preserved* the mtime would not be caught;
+  direct evidence still favours an unchanged original.
+
+### 28.3 Q6 register decision — recovered; production gate retained
+
+Per decision recorded this phase, the Q6 evidence classification is flipped from
+**"unverified / provisional"** to **recovered**: the exact-file provider
+directory-listing timestamp called for in §7A is produced and corroborated
+in-artifact. The value **`2026-09-11T21:10:59Z` is retained, unchanged**, and now
+carries provenance (this section supersedes §6 Q6 row and §7A's conclusion as
+historical record; both are kept verbatim above).
+
+Remaining gates, by the literal §7A wording ("directory-listing timestamp
+**captured at retrieval**"):
+- **Research / replay**: Q6 no longer blocks feature computation for the
+  committed CHIRPS artifact — recording of the recovered, provider-corroborated
+  value is acceptable.
+- **Production**: still **CLOSED**. The observance was post-hoc, not at
+  retrieval, so the production gate remains conditional on one authorized
+  reacquisition that captures `Last-Modified`/directory metadata with the
+  request URL and response status at retrieval (the 3.7.5C evidence pipeline
+  supports this). First opportunity: the next authorized CHIRPS download.
+- Production temporal features remain `NEEDS_EVIDENCE`; production remains
+  **NO-GO**.
+
+### 28.4 Q7 ERA5-Land — findings
+
+Artifact semantics. The committed NetCDF carries a global `history` attribute
+`2026-10-08T11:07 GRIB to CDM+CF via cfgrib-0.9.15.1/ecCodes-2.48.2 …` — the CDS
+service built this netCDF **on demand** at retrieval, minutes before the download
+(`retrieved_utc 2026-10-08T11:09:48Z`, job `4548c91f-…`). The file therefore
+postdates `available_utc = 2026-09-15T00:00:00Z` by ~54 days and can never be
+evidence of that bound: for on-demand formats the file's own birth is at
+retrieval, and `available_utc` can only ever describe **dataset vintage**
+availability, never this file's existence.
+
+Manifest attempts (uninformative for availability, re-stated for the record):
+R2 HTTP 422 (malformed input) proves the API was reachable and rejected the
+request shape, nothing about data; R3–R5 HTTP 403 (licences not accepted) prove
+authentication succeeded and the licence gate did not; R6 proves the vintage was
+retrievable **as of** `2026-10-08T11:09:48Z` (retrospective lower bound only).
+
+Independently archived provider evidence (new this phase), via Internet Archive
+captures of the public CDS STAC collection JSON:
+
+| Capture (Wayback timestamp) | `extent.temporal.interval` end | `updated` |
+| --------------------------- | ------------------------------- | --------- |
+| `20260916151323` (2026-09-16) | `2026-09-10T00:00:00+00:00` | `2026-09-16T00:00:00Z` |
+| `20260923183724` (2026-09-23) | `2026-09-17T00:00:00+00:00` | `2026-09-23T00:00:00Z` |
+
+Reading. The ERA5-Land archive continuously covered `1950-01-01` → the listed
+end date on both capture dates, with the end tracking ~5–6 days behind real time
+(consistent with ERA5-Land-T near-real-time latency). Provider-issued, dated,
+and independently archived: the **2026-07-15 vintage was within the continuous
+cover and therefore in-archive and retrievable by 2026-09-16** — one day after
+the claimed bound. This *corroborates the direction and conservativeness of the
+derived bound* but is dataset-level coverage, **not** a per-vintage availability
+timestamp; it cannot pin `2026-09-15T00:00:00Z` to the consolidation of the
+July-2026 consolidated stream.
+
+### 28.5 Q7 register decision — unresolved (unchanged)
+
+Q7 stays `EXTERNAL_EVIDENCE_REQUIRED`. `available_utc 2026-09-15T00:00:00Z`
+remains the derived engineering bound (vintage `2026-07-15` + 2 calendar months,
+`K = 0`), **not provider-issued**. The archived-catalogue finding is recorded as
+corroboration of the bound's direction only; per guardrails no unvalidated `K`
+safety margin is adopted, and rule v1 (§25.4) remains design-only pending a
+separate recorded decision.
+
+Recovery decision: **leave unresolved — no reacquisition for evidence.** An
+on-demand reacquisition can only re-prove retrieval-time availability (it cannot
+recover the historical instant 2026-09-15); a live catalogue fetch today would
+reflect current state only. The archived `2026-09-16` JSON is the closest dated
+provider document available, and it is already recorded here.
+
+### 28.6 Register amendment (effective; supersedes earlier rows by reference)
+
+| Question | Previous status | Status after §28 | Production gate |
+| -------- | --------------- | ---------------- | --------------- |
+| Q6 CHIRPS `available_utc 2026-09-11T21:10:59Z` | `EXTERNAL_EVIDENCE_REQUIRED` — "unverified / provisional"; not derivable (§6 row, §7A) | **Recovered** — provider-issued exact-file directory-listing timestamp, corroborated in-artifact (gzip MTIME); value retained | **Closed** until one authorized on-retrieval capture (3.7.5C pipeline); research/replay unblocked |
+| Q7 ERA5-Land `available_utc 2026-09-15T00:00:00Z` | `EXTERNAL_EVIDENCE_REQUIRED` — derived bound (vintage + 2 mo) | `EXTERNAL_EVIDENCE_REQUIRED` — unchanged; **corroborated only** by archived provider catalogue cover (in-archive by 2026-09-16) | Closed (production NO-GO) |
+
+Both artifacts keep their ledger `available_utc`, SHA-256, size, and manifests;
+no timestamp was re-dated or invented.
+
+### 28.7 Explicit non-claims
+
+- The live CHC listing's Date column was observed once (2026-10-10); it is the
+  provider's current rendering of a fixed per-file mtime and is treated as
+  corroborating provider metadata, **not** as a capture at acquisition.
+- No Wayback capture of the CHIRPS file or its dated `2026/` listing exists
+  (CDX negative); third-party archival independence is **not** claimed for Q6.
+- FEWS NET / NOAA / IRI mirror listings were not inspected (search provider
+  unavailable) and are not relied upon.
+- The CDS catalogue JSON captures were retrieved via the Wayback `id_` endpoint
+  as original bytes; the live catalogue was not fetched.
+- `extent.temporal.interval` end is a dataset-coverage bound, not a per-vintage
+  availability timestamp; the Q7 reading above does not upgrade the bound.
+
+### 28.8 Verification
+
+- `git rev-parse HEAD` → `1fee198` (unchanged; no commit made this phase).
+- `git status --short` → only `docs/historical-data-coverage.md` modified.
+- `git diff --check` → exit 0; docs are a pure append (numstat `0` insertions on
+  existing lines), §§19–27 byte-for-byte preserved.
+- Manifest byte-identical (blob `07dc2cdd…`, SHA-256 `1f2b9434…`, contract
+  `1.1.0`, 6 records); feature contract `1.0.0`.
+- Artifacts byte-identical: CHIRPS SHA-256 `44934651…d9a6` (10,288,665 B),
+  ERA5-Land SHA-256 `af53a81a…4ac9` (127,970 B).
+- No push performed.
+
+### 28.9 Verdict
+
+- **Q6 CHIRPS — recovered** for research/replay: the exact-file provider
+  directory-listing timestamp is established and matches the artifact-embedded
+  gzip MTIME and the ledger to the second; value retained. The production gate
+  stays closed until one authorized reacquisition captures evidence at retrieval
+  (3.7.5C now supports this; §26.5's "dated directory/index catalog capture
+  before the next CHIRPS download" is the concrete trigger).
+- **Q7 ERA5-Land — left unresolved**: no provider-issued per-vintage timestamp
+  exists in any inspected record; the archived catalogue corroborates
+  in-archive-by-2026-09-16 only. Register status unchanged.
+- Production temporal features for **both** sources remain `NEEDS_EVIDENCE`;
+  production remains **NO-GO**. The findings here narrow the outstanding work
+  for CHIRPS to a single authorized evidence-capturing reacquisition.
+
+---
+
+## 29. Phase 3.7.6B — CHIRPS retrieval-time evidence closure audit
+
+Audit and documentation only: establish the exact, smallest safe path to obtain
+**retrieval-time** CHIRPS HTTP evidence for the existing daily artifact so the Q6
+production gate can later be reconsidered, without misclassifying the recovered
+historical evidence and without mutating any repo data. **No live downloads, no
+network acquisition, no code changes, no commit/push.** §28 (Phase 3.7.6A) is
+preserved byte-for-byte; §29 appends only.
+
+### 29.1 Scope and method
+
+- Starting checkpoint: HEAD `1fee198`; working tree contains only the §28
+  append from Phase 3.7.6A (verified via `git status --short`, `rev-parse`).
+- Read: `backend/app/services/acquisition.py`, `backend/app/schemas/acquisition.py`,
+  `backend/app/services/cds.py` (Q7-scope only), the rig tests
+  `backend/tests/test_acquisition_rig.py` / `test_cds_acquisition.py`, and §28.
+- Confirmation run (no code changed): `python -m pytest tests/test_acquisition_rig.py
+  tests/test_cds_acquisition.py -q -o addopts=""` → **142 passed** (2.01 s),
+  confirming the overwrite/dedupe/header-capture behaviour cited below.
+- Guardrails: no fabricated values; no live requests; existing artifact,
+  committed manifest records, contracts, and code untouched; Q7 stays
+  `EXTERNAL_EVIDENCE_REQUIRED`; production stays **NO-GO**.
+
+### 29.2 CHIRPS acquisition call path (traced)
+
+`AcquisitionDriver(source="chirps")` (`acquisition.py:636`, constructor accepts
+injectable `raw_root`, `manifest_path`, `transport`) → `acquire()`
+(`acquisition.py:770`):
+
+1. `resolve_credentials(source)` — CHIRPS `authentication = NONE`, so no
+   credential gate and no env reads (`acquisition.py:304-318`).
+2. Retrieval params: `url` is required and must be supplied by the caller
+   (`_extract_download_url`, `acquisition.py:480-495`; config-only source, no
+   hardcoded endpoint). `request_url` = redacted URL (`acquisition.py:813`).
+3. `acquisition_key` (caller-supplied or a fresh timestamp `%Y%m%dT%H%M%SZ`,
+   `acquisition.py:815`) → immutable path via `storage_relative_path`
+   (`acquisition.py:373-380`):
+   `data/raw/real/{source}/{source}__{version_slug}__{key_slug}{extension}`.
+4. **Immutability gate** `acquisition.py:821-824`: if the target path already
+   exists → `DuplicateArtifactError` raised **before any network call**. An
+   existing artifact is never overwritten by construction and by test
+   (`test_existing_artifact_path_is_never_overwritten`).
+5. `retrieved_utc = utcnow_aware()` `acquisition.py:827` — this is the captured
+   retrieval time for the attempt.
+6. `transport.fetch(url)` (`acquisition.py:344-356`) returns `FetchResult(
+   content, status_code, headers, final_url, redirect_chain)`. A fetch failure
+   is recorded as an honest `FAILED` record (with `http_status` and any
+   allowlisted headers from the error response) and re-raised as
+   `AcquisitionError` (`acquisition.py:832-862`); **no retries exist** — one
+   fetch, one record, no artifact bytes left on failure
+   (`test_failed_acquisition_records_failure_honestly`).
+7. Evidence assembled from the **final** response (`acquisition.py:864-884`):
+   `request_url`, `request_method=GET`, `http_status=result.status_code`,
+   `response_headers=_allowlisted_headers(result.headers)`, `final_url`/`redirect_chain`
+   (redacted), `provider_metadata`, `availability_classification/source/derivation`,
+   `redacted_params`.
+8. SHA-256 of the delivered bytes vs caller-supplied `expected_sha256`
+   (`acquisition.py:886-906`): mismatch records `CHECKSUM_MISMATCH` and raises —
+   never silently accepted.
+9. Content dedupe (`acquisition.py:908-936`): if a kept record (`DOWNLOADED` /
+   `SKIPPED_EXISTING`) already exists for the same `kind`+`source` with the same
+   `sha256`, a `SKIPPED_EXISTING` record is **appended** with its own evidence
+   and `storage_path = existing[0].storage_path`, and the function **returns
+   before any write**. No second file is created
+   (`test_identical_content_is_deduplicated_as_skipped_existing`).
+10. Otherwise `_atomic_write` (`acquisition.py:383-396`, temp + `os.replace`) to
+    the new path and persist a `DOWNLOADED` record (`acquisition.py:938-957`).
+
+Evidence capture points, exactly:
+
+| Evidence | Where captured | Persisted as |
+| -------- | -------------- | ------------ |
+| `Last-Modified` (+ `etag`, `date`, `content-length`) | raw final-response headers captured in `FetchResult.headers` (`acquisition.py:350`), filtered by `_allowlisted_headers` (`acquisition.py:410-424`, allowlist `schemas/acquisition.py:36`) and again by the record field validator (`schemas/acquisition.py:192-207`; values bounded/cleaned) | `record.response_headers` |
+| Retrieval time | `retrieved_utc = utcnow_aware()` (`acquisition.py:827`) | `record.retrieved_utc`, plus `acquired_utc` at registration |
+| Final URL + redirect chain | `redact_url(result.final_url)`, `_redact_chain(...)` (`acquisition.py:867-868`) | `record.final_url`, `record.redirect_chain` |
+| HTTP status | `result.status_code` | `record.http_status` |
+| Content hash | `hashlib.sha256(data)` (`acquisition.py:887`) | `record.sha256` (+ `file_size_bytes`) |
+| Artifact identity | `storage_relative_path` key + `_make_record` (`acquisition.py:596`) | `record_id` (`REAL-chirps-{version}-{key}`), `storage_path`, `source_record_id` |
+| Availability | **caller-supplied only**; never parsed from headers (`acquisition.py:780-791`) | `available_utc`, `availability_classification` (default `"unknown"`), source/derivation |
+
+`available_utc` is never derived from `Last-Modified`/`Date`/`ETag` anywhere in
+the codebase (consistent with §22.6 and §26 audits).
+
+### 29.3 Can a fresh authorized acquisition capture safe retrieval-time evidence?
+
+The driver can already do this with **no code change**, by constructor
+injection (`raw_root`, `manifest_path`) plus a new `acquisition_key`:
+
+- **Same `acquisition_key` as the original → `DuplicateArtifactError` before any
+  fetch** (step 4). Safe but useless: no evidence is captured. Not the path.
+- **New `acquisition_key`, same vintage URL**: the fetch performs and evidence
+  is captured for the same URL/bytes. If the delivered bytes hash exactly to the
+  committed artifact (sha `44934651…d9a6`), step 9 appends a `SKIPPED_EXISTING`
+  record — `storage_path` points at the original artifact, **no new file is
+  written, the original artifact is untouched**, and the record carries the
+  retrieval-time headers/status/final-url. If the bytes differ, step 8 records a
+  `CHECKSUM_MISMATCH` (or step 10 stores a new file under the new key) — in all
+  cases the original artifact and its record are never modified.
+- The one unavoidable mutation: **any run that points `manifest_path` at the
+  committed manifest appends a record and re-saves the JSON**, changing the
+  manifest blob/sha and record count. This phase requires the committed manifest
+  stays at 6 records, so the closure run must target an **isolated copy** of the
+  manifest in a scratch location (same for `raw_root`). No dedicated CLI or
+  "evidence-only" mode exists; the isolation is achieved through the public
+  constructor parameters, which is the smallest safe mechanism available.
+
+Conclusion: **yes** — with (a) scratch `raw_root`, (b) a byte copy of the
+committed manifest at a scratch `manifest_path`, (c) a fresh `acquisition_key`,
+(d) `expected_sha256` = the committed artifact hash, (e) the exact CHC URL. The
+evidence is recorded in the isolated ledger only and can be transcribed here;
+merging it into the committed manifest is a separate, recorded decision (it
+would change the manifest blob/hash by design).
+
+### 29.4 Overwrite / duplicate / metadata risks (checked against code + tests)
+
+- **Overwrite of the original artifact**: impossible. Same-key runs abort before
+  fetch (immutability gate); new-key runs write to a new path or take the
+  dedupe short-circuit. `_atomic_write` is the only writer and is never reached
+  with the original key.
+- **Duplicate records**: every attempt appends one record; `record_id` embeds
+  the acquisition key, so distinct keys give distinct ids and identical content
+  is marked `SKIPPED_EXISTING` (the intended duplicate-content marker), not
+  re-downloaded bytes. Alternative outcome is a `FAILED`/`CHECKSUM_MISMATCH`
+  record, still one record per attempt.
+- **Silent metadata changes**: none. Existing records are never edited or
+  re-timestamped; the ledger is load → append → atomic re-save. The only JSON
+  wobble risk is the whole-file blob/hash change from appending itself, which is
+  why the committed file must not be the write target during a closure audit run.
+- **Retries**: none in `acquire()` (single fetch; single failure record).
+- **Failure handling**: honest `FAILED` records; no bytes left behind; no fake
+  success (tests at `test_acquisition_rig.py:332`).
+- **Provider content drift**: if the provider currently serves different bytes
+  for the 2026-08-31 vintage, no retrieval-time evidence is obtained **for the
+  committed artifact** (hashes diverge). This is the key acceptance gate.
+- **Misleading derivation**: nothing auto-labels a captured header as
+  `provider_issued`; the default classification stays `unknown`.
+
+### 29.5 Minimum safe execution plan (documented, NOT executed this phase)
+
+Preconditions: explicit authorization to perform one live GET to
+`data.chc.ucsb.edu`; record today's observation date. Then:
+
+1. Create scratch `raw_root` and a scratch `manifest_path`; byte-copy the
+   committed `data/provenance/acquisition_manifest.json` to the scratch path (so
+   dedupe sees the original CHIRPS record).
+2. `driver = AcquisitionDriver(source="chirps", raw_root=<scratch>,
+   manifest_path=<scratch manifest>, transport=AcquisitionTransport())`.
+3. `record = driver.acquire(
+   acquisition_key="2026-08-31-evidence-<utcnow>",
+   retrieval_params={"url": "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz",
+                     "extension": ".tif.gz"},
+   expected_sha256="449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6",
+   source_record_id="chirps-v2.0.2026.08.31.tif.gz",
+   observation_start_utc=..., observation_end_utc=... (same as original record),
+   available_utc=<recovered value>, availability_classification="unknown",
+   availability_source="response_headers.last-modified")`.
+4. Assert `record.status == SKIPPED_EXISTING` and `record.sha256 == 449…` and
+   `record.response_headers` contains `last-modified`. If bytes differ, STOP
+   (evidence would describe new bytes, not the committed artifact).
+5. Transcribe the captured evidence (HTTP 200, `last-modified`, `etag`, `date`,
+   `final_url`, `redirect_chain`, `retrieved_utc`) into the evidence record.
+6. Verify the scratch `raw_root` contains **no** new files and the scratch
+   manifest gained exactly one (`SKIPPED_EXISTING`) record; then discard the
+   scratch tree. Committed manifest stays 6 records, blob/hash unchanged.
+
+### 29.6 Evidence acceptance criteria and precise limits
+
+Accepted as **retrieval-time server evidence** (not "provider_issued"):
+- HTTP 200 to the exact vintage URL, allowlisted headers captured at that
+  fetch, final URL and status recorded, delivered bytes hash exactly to the
+  committed artifact. This is what §7A's "directory-listing/`Last-Modified`
+  captured with the request URL and response status at retrieval" describes at
+  the form level — but for a **new** retrieval instant, not the original
+  `2026-10-08` one.
+- If the returned `last-modified` equals `2026-09-11T21:10:59Z`, it *corroborates*
+  the recovered gzip MTIME and directory-listing timestamp (the provider's file
+  mtime is the same stable value) and closes the evidence chain:
+  artifact bytes → gzip MTIME → provider directory listing → live `Last-Modified`.
+- It does **not** prove the provider served/published that value on the original
+  retrieval date, and it is not, by itself, a `provider_issued` `available_utc`.
+  Classification must stay `unknown` on the record; the header value is evidence,
+  not a derivation. Production-gate reconsideration is a separate recorded
+  decision and is **out of scope for this phase**.
+
+### 29.7 Register posture after §29 (unchanged by this phase)
+
+- **Q6 CHIRPS**: recovered for research/replay (§28). Production remains
+  **CLOSED** until an authorized retrieval-time capture **and** a recorded
+  production-gate decision. This section documents the smallest safe path to
+  obtain that capture; it does not perform it.
+- **Q7 ERA5-Land**: stays `EXTERNAL_EVIDENCE_REQUIRED`. No CDS jobs launched; no
+  ERA5-Land reacquisition. Production temporal features for both sources remain
+  `NEEDS_EVIDENCE`; overall production remains **NO-GO**.
+
+### 29.8 Verification
+
+- `git rev-parse HEAD` → `1fee198` (unchanged; no commit made this phase).
+- `git status --short` → only `docs/historical-data-coverage.md` modified.
+- `git diff --check` → exit 0; docs are a pure append; §§19–28 byte-for-byte
+  preserved (this edit touched only the §28 final lines/EOF).
+- Confirmation tests (no code changed): `pytest tests/test_acquisition_rig.py
+  tests/test_cds_acquisition.py -q -o addopts=""` → **142 passed** in 2.01 s.
+- Manifest byte-identical (blob `07dc2cdd…`, SHA-256 `1f2b9434…`, contract
+  `1.1.0`, 6 records); feature contract `1.0.0`.
+- Artifacts byte-identical: CHIRPS SHA-256 `44934651…d9a6` (10,288,665 B);
+  ERA5-Land SHA-256 `af53a81a…4ac9` (127,970 B).
+- Secret scan scope/result reported at closing (§29.9 of the run, outside this
+  document) — 117 files scanned against 4 `.env` values, **hits = 0**.
+- No push performed.
+
+### 29.9 Verdict
+
+The existing driver already provides a safe, isolated, evidence-capturing path
+through constructor injection (`raw_root`, `manifest_path`, `transport`) plus a
+fresh `acquisition_key` and the `SKIPPED_EXISTING`/checksum dedupe — **no code
+change is required**. The minimum safe closure is a single authorized live GET in
+a scratch environment per §29.5, gated on `sha256 == 4493…`, with the captured
+headers kept as retrieval-time server evidence (classification stays `unknown`).
+Q6 research/replay stays recovered; the production gate stays closed pending that
+capture and an explicit recorded decision; Q7 remains unresolved; production
+remains NO-GO.
+
+## 30. Phase 3.7.6C — Isolated CHIRPS evidence capture readiness (2026-10-10)
+
+Readiness-only audit: no live network request was made, no acquisition ran, no
+source code or configuration changed, no manifest record or artifact was
+mutated, and nothing was committed or pushed this phase. It delivers a
+verified, reproducible execution plan for a future explicitly authorized
+retrieval-time `Last-Modified` capture (the missing Q6 production-gate evidence,
+§28.4/§28.5), so later approval needs no further investigation. §29/§28/§27
+are preserved byte-for-byte; §30 appends only.
+
+### 30.1 Phase ground rules (unchanged from §28/§29)
+
+- Nothing is captured, fetched, or labelled `provider_issued` in this phase; the
+  live GET runs only on explicit future authorization.
+- The Q6 production gate remains **CLOSED**; Q6 research/replay stays recovered;
+  Q7 remains `EXTERNAL_EVIDENCE_REQUIRED`; production temporal features stay
+  `NEEDS_EVIDENCE`; production remains **NO-GO**.
+- No timestamp or header is fabricated, and a current `Last-Modified` is never
+  treated as proof of historical availability by itself (§28.5).
+
+### 30.2 Repository facts verified in this phase
+
+- Driver defaults resolve to tracked paths (`backend/app/config.py:142-146`):
+  `ACQUISITION_MANIFEST = <root>/data/provenance/acquisition_manifest.json`,
+  `RAW_REAL_DIR = <root>/data/raw/real`; both overridable by constructor args
+  (`backend/app/services/acquisition.py:649-651`).
+- Registry `chirps` (`acquisition.py:141-160`): `authentication=NONE`, no
+  `endpoint_base`, `require_bounded_scope=False`,
+  `product_version="v2.x"`. `get_source_config("chirps")` returns it (`:261`).
+- Committed manifest (`data/provenance/acquisition_manifest.json`): contract
+  `1.1.0`, 6 records; first record `REAL-chirps-v2.0-2026-08-31`
+  (`status="downloaded"`, `product_version="v2.0"`,
+  `storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz"`,
+  `observation_start_utc=2026-08-31T00:00:00Z`,
+  `observation_end_utc=2026-09-01T00:00:00Z`,
+  `available_utc=2026-09-11T21:10:59Z`, `sha256=44934651…d9a6`,
+  `file_size_bytes=10288665`, `retrieval_params` = CHC HTTPS URL +
+  `extension=".tif.gz"` + NE-India bbox).
+- Evidence headers allowlist (`backend/app/schemas/acquisition.py:36`):
+  `last-modified`, `etag`, `date`, `content-length`; `_allowlisted_headers`
+  (`acquisition.py:410-424`) canonicalises, bounds, and truncates values.
+- `AcquisitionRecord.availability_classification` is
+  `Literal["provider_issued","derived","unknown"]`
+  (`backend/app/schemas/features.py:158`); default `unknown`; `available_utc` is
+  caller-supplied only, never derived from response headers.
+- Coherence validator (`schemas/acquisition.py:232-245`): `downloaded`/
+  `skipped_existing` records must carry `sha256`, `file_size_bytes`,
+  `storage_path`; a `failed` record may not claim a `storage_path`.
+
+### 30.3 Specified isolated invocation (executed only when authorized)
+
+No CLI/executable acquisition interface exists; the supported surface is the
+programmatic driver API (`AcquisitionDriver`, `acquisition.py:770`). The run
+wires `AcquisitionTransport()` only when authorized, keeps all writes inside a
+fresh scratch directory outside the repo, and never points at the committed
+manifest or the live artifact:
+
+| Parameter | Value |
+|---|---|
+| `source` | `"chirps"` (registry config applied automatically) |
+| `acquisition_key` | `2026-08-31-evidence-<utcnow>` — fresh, never reused |
+| `raw_root` | fresh scratch dir under `$env:TEMP`, outside `PROJECT_ROOT` |
+| `manifest_path` | byte-for-byte scratch copy of the committed manifest |
+| `transport` | `AcquisitionTransport()` (single anonymous GET) |
+| `retrieval_params` | url `https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz`, extension `.tif.gz` |
+| `source_record_id` | `chirps-v2.0.2026.08.31.tif.gz` |
+| `product_version` | `v2.0` (mirrors the committed record) |
+| `expected_sha256` | full `449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6` |
+| `observation_start_utc` / `observation_end_utc` | `2026-08-31T00:00:00Z` / `2026-09-01T00:00:00Z` |
+| `available_utc` | `2026-09-11T21:10:59Z` (caller-supplied recovered value, §28) |
+| `availability_classification` | `"unknown"` (default; never auto-issued) |
+
+Expected outcome: identical bytes → `SKIPPED_EXISTING` (`acquisition.py:908-936`)
+record whose `storage_path` equals the existing artifact's, no file written after
+fetch, and committed manifest/artifact byte-identical.
+
+### 30.4 Preflight checks — all demonstrated offline 2026-10-10 (no network)
+
+| # | Check | Evidence | Result |
+|---|---|---|---|
+| 1 | Scratch root resolves outside `PROJECT_ROOT` | path resolution + containment | PASS |
+| 2 | Pre-run capture of artifact SHA-256 and committed-manifest SHA-256 | `sha256` digest capture | PASS |
+| 3 | Scratch manifest is a byte-for-byte copy (same SHA-256) and `load_acquisition_manifest` validates it (contract `1.1.0`, 6 records) | copy + hash compare + pydantic load | PASS |
+| 4 | Fresh `acquisition_key` yields a `record_id` absent from the committed manifest | `_slug`/`_make_record`-identical template + set membership | PASS |
+| 5 | `expected_sha256` equals the committed record's SHA-256 and the artifact's | hash comparison | PASS |
+| 6 | Intended endpoint is the CHC HTTPS URL only; `chirps` is `NONE`-auth with no `endpoint_base`; `era5-land` (the only `cds-api` source) is not invoked | code/config inspection + manifest | PASS |
+| 7 | Candidate artifact path lands under the scratch `raw_root`, not the repo | `storage_relative_path` + containment | PASS |
+| 8 | No live network request occurred during this phase | nothing invoked; phase executed no acquisition | PASS |
+
+All 12 sub-checks passed (one demonstrator bug was corrected: the `era5-land`
+auth enum value is `cds-api`, not `cds_api`). Checks 1–5 and 7 re-run as
+commands at execution time; none require network.
+
+### 30.5 Post-run acceptance criteria (authorized run only)
+
+- Exactly one evidence-bearing record is appended to the **scratch** manifest
+  with `status="skipped_existing"` and `storage_path` equal to the existing
+  artifact's path; the coherence validator (`sha256` + `file_size_bytes` +
+  `storage_path`) passes.
+- Evidence holds only allowlisted headers; `last-modified` may equal or differ
+  from the recovered `2026-09-11T21:10:59Z` — either is reported verbatim,
+  never coerced, and never acts as historical-availability proof by itself.
+- Request snapshot is redacted (no secrets) and records a live server `status`
+  plus any redirect chain honestly.
+- `availability_classification` stays `"unknown"`. The captured header is
+  evidence for the recorded decision workflow (§28.6), not a self-labelling
+  `provider_issued` claim.
+- Committed manifest (SHA-256 `1f2b9434…`, contract `1.1.0`, 6 records) and
+  artifact (SHA-256 `44934651…d9a6`, 10,288,665 B) are byte-identical before
+  and after the run.
+
+### 30.6 Failure and cleanup plan
+
+- Any HTTP failure, timeout, or non-2xx status → one honest `failed` record on
+  the scratch manifest, `AcquisitionError` raised, nothing else written; fail
+  closed.
+- Missing/empty allowlisted headers → capture whatever exists, never
+  synthesize; the gate stays closed.
+- SHA-256 drift from `expected_sha256` → `CHECKSUM_MISMATCH` + raise
+  (`acquisition.py:886-906`); original artifact untouched.
+- Storage-key collision (`target.exists()`) → `DuplicateArtifactError` before
+  any fetch (`:821-824`, `:1075-1078`).
+- Corrupt scratch manifest → `ManifestError` on load; abort.
+- Cleanup discards the scratch directory only; the original artifact and the
+  committed manifest are never deleted or overwritten. Post-cleanup, verify the
+  repo `data/` tree and manifest are byte-identical to their pre-run hashes.
+
+### 30.7 Findings from this phase
+
+- Readiness proven: every preflight check was exercised offline and passed; the
+  authorized run needs only explicit authorization plus re-execution of the
+  §30.4 commands.
+- **Schema gap (new)**: `AcquisitionManifest.records` has no `record_id`
+  uniqueness enforcement (`schemas/acquisition.py:258`). The committed manifest
+  already holds five ERA5-Land records sharing one `record_id`
+  (`REAL-era5-land-operational-…-2026-07-15t0000`: four `failed`, one
+  `downloaded`) — only 2 unique ids across 6 records, from repeated CDS attempts
+  under one key (`acquire_cds`, `acquisition.py:960`). §29's "no retries"
+  observation was specific to the plain HTTP `acquire()` path and is not a
+  global guarantee. Consequence: fresh-key uniqueness is an explicit preflight
+  responsibility (check 4), not a ledger invariant.
+- No CLI/executable acquisition interface exists (only the programmatic driver
+  API); recorded as a missing capability rather than implemented.
+- No new availability evidence was claimed this phase; the production gate
+  stays closed.
+
+### 30.8 Final state
+
+- HEAD `1fee198`; working tree: only `docs/historical-data-coverage.md`
+  modified (append-only §§28–30; diff is pure append, `git diff --check`
+  clean).
+- Manifest SHA-256 `1f2b9434…`, contract `1.1.0`, 6 records, blob `07dc2cdd…`;
+  feature contract `1.0.0`; CHIRPS SHA-256 `44934651…d9a6` (10,288,665 B);
+  ERA5-Land SHA-256 `af53a81a…4ac9` (127,970 B) — all unchanged.
+- Focused offline acquisition suite: **142 passed**. Secret scan (outside this
+  document, §29.9 pattern): 117 files / 4 `.env` values, hits = 0.
+- No push. STOP: no acquisition, no code changes, no commit.
+
+## 31. Phase 3.7.6D — Final pre-acquisition decision-gate audit (2026-10-10)
+
+No-network decision-gate audit: determine whether the project is ready for a
+separately authorized, isolated CHIRPS retrieval-time evidence capture, or
+whether an additional safety control is required first. **Read-only plus
+documentation append only; no acquisition, no HTTP, no CDS job, no code/manifest/
+artifact/contract change, no commit/push.** §§19–30 are preserved byte-for-byte;
+§31 appends only.
+
+### 31.1 Scope and method
+
+Each audit task was answered by direct inspection of the actual implementation
+(`backend/app/services/acquisition.py`, `backend/app/schemas/acquisition.py`,
+`backend/app/redaction.py`, `backend/app/config.py`), the committed manifest
+and artifact, and the existing offline test suite. No live endpoint was
+contacted. Findings are split into **verified code behavior**, **operator-enforced
+safeguards**, and **unresolved risks**.
+
+### 31.2 Task 1 — Manifest write/append and validation path
+
+- `AcquisitionDriver.acquire` sequence (:770–957): config gates (credentials,
+  URL/scope) → `load_acquisition_manifest` (:826) → evidence-capturing fetch
+  (:830–884) → checksum (:886–906) → content dedupe (:908–936) → immutable
+  store (:938–956). Every terminal outcome ends in `_persist_record`.
+- `_persist_record` (:559–561) is a **pure append**: `manifest.records.append(
+  record)` then `save_acquisition_manifest`. There is **no** duplicate-id check,
+  no rejection, no overwrite, no merge — a repeated `record_id` is simply a
+  second record with the same id, exactly as the ledger already shows for
+  ERA5-Land (one id across four `failed` + one `downloaded`).
+- `save_acquisition_manifest` (:524–540) writes `model_dump_json(indent=2,
+  exclude_none=True) + "\n"` atomically (tmp file + `os.replace`,
+  `_atomic_write` semantics at :383–396); it creates parent directories it is
+  pointed at.
+- `load_acquisition_manifest` (:509–521): an existing file is validated with
+  `AcquisitionManifest.model_validate` (invalid JSON → `ManifestError`); a
+  **missing path silently returns an empty ledger** (`generated_at_utc=now`,
+  note "Ledger initialised empty…"), which matters for task 4.
+- Validation happens at (a) record construction — field constraints plus the
+  coherence validator `_state_is_coherent` (`schemas/acquisition.py:232-245`;
+  kept records must carry `sha256`+`file_size_bytes`+`storage_path`, failed
+  records must not claim a path) — and (b) manifest load. No manifest-level
+  constraint exists over `records`.
+
+### 31.3 Task 2 — Does a fresh acquisition key guarantee a unique record_id?
+
+**No.** Two independent reasons from code:
+
+- `record_id` is `f"{kind}-{source}-{_slug(version)}-{_slug(acquisition_key)}"`
+  (`_make_record`, :596), where `_slug` (:368–370) lowercases, collapses
+  non-word characters and truncates to 60. Two runs that resolve the same
+  `kind`/`source`/`version`/key-slug produce an identical id.
+- The default key when none is supplied is `utcnow().strftime("%Y%m%dT%H%M%SZ")`
+  (:815) — **second resolution**. Two `acquire()` calls for the same
+  source/version within the same second collide, and nothing in the schema
+  (`records: list[AcquisitionRecord]`, `schemas/acquisition.py:258`) or in
+  `_persist_record` rejects, overwrites, or merges the duplicate. Ids collide
+  and are **retained**.
+
+Freshness is therefore entirely a caller obligation. The §30.3 key form
+(`2026-08-31-evidence-<utcnow>`) must embed a collision-free component (e.g.,
+microsecond timestamp or fresh unique suffix) **and** the §30.4 check-4
+set-membership test against every existing `record_id` must remain mandatory.
+The offline demonstrator confirmed the constructed candidate
+`REAL-chirps-v2.0-2026-08-31-evidence-20261010t000000z` is currently absent.
+
+### 31.4 Task 3 — SKIPPED_EXISTING persistence and storage_path
+
+- Reachable only after a **successful fetch whose SHA-256 equals
+  `expected_sha256`** (:887–906 passes); dedupe then finds the first kept
+  (`downloaded`/`skipped_existing`) record with the same `kind`+`source`+sha
+  (:908–917).
+- The new record is built (:918–934) with `status="skipped_existing"`,
+  `storage_path = existing[0].storage_path` — i.e. the **path string of the
+  already-present artifact** (`chirps/chirps__v2.x__2026-08-31.tif.gz` for the
+  single CHIRPS kept record) — plus `sha256=actual` and `file_size_bytes`.
+- `_atomic_write` is **not** called on this branch, so the existing artifact
+  bytes are untouched; the record is appended and returned.
+- Caveats: (i) dedupe trusts ledger bytes + live fetch bytes and does **not**
+  re-hash the on-disk file — post-run on-disk re-hash closes that loop
+  (operator check, §31.7 G9); (ii) `existing[0]` is order-dependent, but with a
+  single candidate the reference is unambiguous; (iii) `available_utc` and
+  `availability_classification` remain caller-supplied — headers never become
+  availability time (test `test_http_headers_never_become_availability_time`).
+
+### 31.5 Task 4 — Scratch isolation: code-enforced or operator convention?
+
+**Operator preflight convention only; no code enforcement exists.**
+
+- Constructor defaults point into the repo tree when no overrides are passed
+  (`acquisition.py:649-651`; `config.py:142-146`): `raw_root →
+  <root>/data/raw/real`, `manifest_path →
+  <root>/data/provenance/acquisition_manifest.json`.
+- `save_acquisition_manifest`/`_atomic_write` will `mkdir(parents=True)` and
+  write wherever they are pointed; there is **no repo-containment check** and no
+  "is this the committed manifest?" check anywhere in the driver.
+- Accidental in-repo scratch is therefore possible three ways:
+  - **R1** running with default arguments → the evidence record is appended to
+    the **committed** manifest and bytes written under `data/raw/real/`;
+  - **R2** a typo'd scratch path → `load_acquisition_manifest` silently returns
+    an empty ledger (missing path is not an error, :512–516) and the first
+    persist creates a fresh manifest (plus any `mkdir`) at the resolved path —
+    possibly inside the repo — without ever touching the committed ledger;
+  - **R3** a scratch path that resolves inside `PROJECT_ROOT` (relative-path
+    mishandling) — both a mis-resolution and R1/R2 are prevented only by the
+    explicit §30.4 preflight checks 1–3 (containment + byte-equal copy +
+    validating load), which were demonstrated offline.
+
+Minimal-fix proposal only (not implemented, per task 7): (a) a `must_exist=True`
+option on `load_acquisition_manifest` to fail on a missing ledger (defeats R2);
+(b) an opt-in driver-time guard rejecting `raw_root`/`manifest_path` that
+resolve inside `PROJECT_ROOT` unless the caller explicitly acknowledges the
+committed paths; (c) an assert that the supplied `manifest_path` content is
+byte-identical to `settings.ACQUISITION_MANIFEST` at construction. Forward-only
+additions; they would require a separate reviewed change and must not touch
+legacy records.
+
+### 31.6 Task 5 — Evidence whitelist and sanitization: verified vs assumed
+
+**Verified by code and offline tests** (tests in
+`backend/tests/test_acquisition_rig.py` unless noted):
+
+- Header allowlist only: `last-modified`, `etag`, `date`, `content-length`
+  (`schemas/acquisition.py:36`); `_allowlisted_headers` (:410–424) keeps only
+  those, lowercased, control-chars stripped and truncated to 512 chars
+  (`redaction.py:19`, `bound_string` :100). Tests: allowlisted-only capture,
+  bounded values, control-char stripping.
+- `Last-Modified` is stored verbatim even when invalid and **never** becomes
+  `available_utc`; absent headers keep classification `"unknown"`. Tests:
+  `test_invalid_last_modified_value_is_stored_verbatim`,
+  `test_provider_omitted_availability_headers_stay_unknown`,
+  `test_explicit_availability_classification_is_preserved`.
+- Request URL, `final_url` and every redirect hop are redacted by
+  `redact_url`/`_redact_chain` and the redacted names are recorded
+  (`:867–871`); malformed URLs fail closed. Tests: redirect request/final/chain,
+  URL-secret redaction, malformed-URL fail-closed.
+- `retrieval_params` are scrubbed recursively (sensitive keys dropped, `url`/
+  `export_url` redacted, depth cap 25) (:431–465). Tests: sensitive and nested
+  secret scrubbing.
+- `provider_metadata` is sanitized and bounded by the schema validator
+  (`schemas/acquisition.py:200-230`; caps at `redaction.py:22-23`). Test:
+  `test_provider_metadata_is_sanitized_and_bounded`.
+- Error strings are redacted via `redact_text` (:468–477); failed fetches (with
+  and without a response) and checksum mismatches still persist honest evidence
+  records (:830–862, :886–906). CDS-side token/host protection is separately
+  tested (`tests/test_cds_acquisition.py`).
+
+**Remaining operational assumptions (not provable offline this phase):**
+
+- A1 the exact committed CHIRPS URL still serves the same bytes over HTTPS
+  (single anonymous GET, `timeout=120`, `headers={}`) at run time;
+- A2 CHC actually returns an allowlisted header (especially `Last-Modified`) —
+  absence is handled but leaves only `date`/`etag` or an empty evidence set;
+- A3 if a redirect occurs, the final resource's headers/status describe the
+  resolved file (code captures that); CHC's live behavior is external;
+- A4 even a captured current `Last-Modified` is evidence, not historical-proof
+  (§28.5) — an audit posture, not a code property;
+- A5 redaction correctness depends on the tuned `redact_url`/`redact_text`
+  (tested, fail-closed on malformed URLs, but novel adversarial shapes are not
+  exhaustively provable).
+
+### 31.7 Task 6 — Explicit go/no-go criteria for a future authorized run
+
+All checks below must re-clear **as run-time commands** at the authorized
+execution, in addition to the recorded human authorization for the GET itself
+(G10). G1–G9 mirror §30.4 and were all demonstrated offline on 2026-10-10.
+
+| # | Criterion | Required evidence |
+|---|---|---|
+| G1 | Scratch root and scratch manifest resolve **outside** all tracked repo paths | containment test vs `PROJECT_ROOT` (PASS, §30.4-1) |
+| G2 | Full SHA-256 and size of the **original** artifact and of the **committed** manifest recorded pre-run | `sha256` digests (PASS, §30.4-2); artifact `44934651…d9a6` 10,288,665 B; manifest `1f2b9434…` |
+| G3 | Fresh record identity verified against **every** existing `record_id` | set-membership == absent (PASS, §30.4-4); schema has no enforcement, caller substitutes |
+| G4 | `expected_sha256` equals the original artifact's hash | hash comparison (PASS, §30.4-5) |
+| G5 | Exact CHIRPS endpoint + GET-only request verified | URL host check + `request_method="GET"` (PASS, §30.4-6) |
+| G6 | No CDS/ERA5 path reachable from this invocation | `chirps` is `authentication=NONE`, no `endpoint_base`; `era5-land` is the only `cds-api` source and is not constructed (PASS, §30.4-6/§30.3) |
+| G7 | Result evidence written **only** to scratch | candidate path lands under scratch raw root (PASS, §30.4-7); stride on defaults (R1) rejected |
+| G8 | Content drift or missing headers never fabricate an availability timestamp or `provider_issued`; `availability_classification="unknown"` | verbatim header capture + caller-supplied time (tests in §31.6); enforced at run |
+| G9 | Post-run hashes prove committed manifest and original artifact byte-identical | pre/post hash diff (G2 baseline) |
+| G10 | Explicit recorded human authorization for the live GET | decision record before any request |
+
+**Verdict: CONDITIONAL GO.** The path is safe and fully specified, requires no
+code change, and every offline-demonstrable criterion already passes. Execution
+is permitted **only** under explicit authorization and re-clearing G1–G9 at run
+time. The conditions are: (C1) isolation and uniqueness are operator-enforced,
+not code-enforced (§31.5) — each run must repeat the preflight; (C2) live server
+behavior (A1–A3) can only be confirmed at run time; (C3) the mandatory post-run
+integrity re-hash (G9) precedes any decision on the captured evidence.
+
+### 31.8 Unresolved risks register
+
+| # | Risk | Impact | Control / owner |
+|---|---|---|---|
+| R1 | Default `raw_root`/`manifest_path` write into the repo tree | committed manifest mutated on an unauthorized default-style run | Operator: always pass scratch paths; G1/G7 preflight (operator) |
+| R2 | Missing/typo'd scratch manifest silently yields an empty ledger | stray manifest created at the wrong path; committed ledger untouched but evidence lost/misplaced | Operator: G2/G3 byte-equal + load-validation preflight (operator); proposal §31.5*(a)* (unimplemented) |
+| R3 | Scratch path accidentally inside `PROJECT_ROOT` | evidence/bytes land in the repo | Operator: containment check G1 (operator) |
+| R4 | No `record_id` uniqueness enforcement (R4) | duplicate ids retained on re-entry (already observed for ERA5-Land) | Operator: fresh-key discipline + G3 (operator); proposal §31.5 numeric/enum approach (unimplemented) |
+| R5 | On-disk artifact drift vs recorded sha is not re-checked at dedupe time | a dedupe hit could point at a changed file | Operator: post-run on-disk re-hash G9 (operator) |
+| R6 | Q7 ERA5-Land availability unresolved; Q6 production gate closed | production temporal features stay `NEEDS_EVIDENCE`; production **NO-GO** | Audit stance, unchanged; decision workflow per §28.6 |
+
+### 31.9 Final state
+
+- HEAD `1fee198`; working tree: only `docs/historical-data-coverage.md`
+  modified (append-only §§28–31; `git diff --check` clean, diff is pure append).
+- Manifest SHA-256 `1f2b9434…`, contract `1.1.0`, 6 records, blob `07dc2cdd…`;
+  feature contract `FEATURE_CONTRACT_VERSION="1.0.0"`
+  (`backend/app/schemas/features.py:71`) — unchanged.
+- CHIRPS artifact SHA-256 `44934651…d9a6` (10,288,665 B) and ERA5-Land
+  SHA-256 `af53a81a…4ac9` (127,970 B) — unchanged.
+- Focused offline acquisition suite (`python -m pytest
+  tests/test_acquisition_rig.py tests/test_cds_acquisition.py -q -o addopts=""`
+  from `backend/`): **142 passed**.
+- Secret scan: 117 files against 4 `.env` values, **hits = 0**.
+- No push; no live network request occurred this phase.
+
+### 31.10 Verdict
+
+CONDITIONAL GO, gated on explicit authorization (§31.7 G10). No additional
+safety control is a required **code** change; the required controls are the
+operator-enforced preflight G1–G9 and the recorded authorization — all defined
+and offline-verified. Q6 production gate stays **CLOSED** pending that authorized
+capture and a recorded decision; Q6 research/replay stays recovered; Q7 remains
+`EXTERNAL_EVIDENCE_REQUIRED`; temporal production features remain `NEEDS_EVIDENCE`;
+overall production remains **NO-GO**. STOP — no acquisition was performed.
+
+## 32. Phase 3.7.6E1 — Final runtime preflight, no acquisition (2026-10-10)
+
+Preflight only: prepare the final execution manifest for a potential isolated
+CHIRPS evidence capture. **No HTTP/network, no `AcquisitionDriver.acquire`/
+`acquire_cds`, no calls into any acquisition code path, no writes to scratch
+manifests or artifact roots, no mutation of committed manifest/original
+artifact/source/schemas/contracts/tests, and no authorization of the future
+capture is given this phase.** §§19–31 are preserved byte-for-byte; §32 appends
+only. All numbers below were **recomputed** read-only this phase (script run
+from `backend/`, `PYTHONPATH=backend`, writes nothing).
+
+### 32.1 Actual paths and full hashes checked
+
+- Committed manifest: `D:\PROJECTS\landslideguard-ai\data\provenance\acquisition_manifest.json`
+  — exists at the settings path, parsed successfully, `contract_version=1.1.0`,
+  **6 records**; full SHA-256 `1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`.
+- Original artifact: `D:\PROJECTS\landslideguard-ai\data\raw\real\chirps\chirps__v2.x__2026-08-31.tif.gz`
+  — exists, full SHA-256 `449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6`,
+  size 10,288,665 B; manifest record fields match (record `sha256` and
+  `file_size_bytes` equal).
+- All 6 existing record IDs enumerated (two unique values; the ERA5-Land ID
+  repeats five times — duplicates retained, as documented in §30.7/§31.3).
+
+### 32.2 G1–G9 matrix (recorded this phase; runtime-only facts never inferred)
+
+| # | Criterion | Status | Evidence this phase |
+|---|---|---|---|
+| G1 | Scratch root + scratch manifest outside tracked repo paths | **PASS** | resolved to `%TEMP%\p376e1_scratch\raw` and `…\acquisition_manifest.json`; outside `PROJECT_ROOT`, not under `data/`, not equal to committed manifest or artifact root (path resolution only — no files created per no-write rule) |
+| G2 | Pre-run full artifact + committed-manifest hashes recorded | **PASS** | full SHA-256/sizes recomputed (§32.1) |
+| G3 | Fresh `record_id` verified against every existing ID | **PASS** | candidate `REAL-chirps-v2.0-2026-08-31-evidence-20261010t041641.555264z` (from a freshly generated key) absent from both the unique set and the full list incl. duplicates; operator re-check mandatory at run time — no schema enforcement (§31.3) |
+| G4 | `expected_sha256` equals original artifact | **PASS** | `44934651…d9a6` == artifact SHA-256 == manifest record SHA-256 |
+| G5 | Exact CHIRPS endpoint + GET-only | **PASS** | URL `https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz`, host prefix `https://data.chc.ucsb.edu/`, `authentication=NONE`, no `endpoint_base`, `require_bounded_scope=False`, extension `.tif.gz`, `request_method="GET"` hardcoded, `timeout=120` |
+| G6 | No CDS/ERA5 path reachable | **PASS** | `chirps` has no CDS entry; only `era5-land` is `cds-api` and is not constructed by this invocation |
+| G7 | Result evidence written only to scratch | **BLOCKED** | runtime-only; requires the authorized run (no-write rule forbids creating scratch this phase). Preflight mapping verified: fresh-key storage path
+  `chirps/chirps__v2.x__2026-08-31-evidence-…z.tif.gz` resolves inside scratch raw root |
+| G8 | Drift/missing headers never fabricate timestamp or `provider_issued` | **PASS** (code/tests); runtime observation deferred | verbatim header capture; `available_utc` caller-supplied; classification default `unknown` (§31.6 tests) |
+| G9 | Post-run hashes prove committed manifest + artifact unchanged | **BLOCKED** | post-run by definition; mandatory before judging captured evidence (§31.7 C3) |
+
+### 32.3 Empty-ledger-on-missing-manifest risk and fail-closed operator safeguard (R2)
+
+`load_acquisition_manifest` returns a **fresh empty ledger** when the target
+path does not exist (`acquisition.py:512-516`). A typo'd scratch manifest path
+would therefore silently carry an empty ledger instead of the committed copy,
+and the first persist would create a stray manifest at the wrong path (R2,
+§31.8). Nothing relies on that fallback: this phase verified the committed
+manifest exists at the exact settings path and parses. **Fail-closed run-time
+gate (before constructing the driver):** (1) `manifest_path` argument given
+explicitly (never default); (2) `assert scratch_manifest.exists()`; (3)
+`assert sha256(scratch_manifest bytes) == 1f2b9434b199fee8809232cd8bfdf889983629d29d1546af7a2dbad747967d43`;
+(4) `assert scratch_raw`/`scratch_manifest` resolve outside `PROJECT_ROOT`;
+any assertion failure → ABORT, no GET. Same discipline protects against R1
+(default `raw_root` write to the repo tree) and R3 (in-repo scratch).
+
+### 32.4 Byte-for-byte scratch-copy property (verified without writing)
+
+Per the no-write rule no scratch file was created this phase. The copy property
+was verified **in-memory**: reading the committed manifest bytes yields
+SHA-256 `1f2b9434…d43`, identical to the on-disk file digest, so any copy made
+from those bytes at the authorized run is byte-for-byte identical (and then the
+run-time gate §32.3 re-asserts equality on the file before any execution).
+
+### 32.5 Proposed future invocation (grounded in the implementation; NOT executed)
+
+Programmatic driver call only (no CLI exists). This is the exact parameter set
+the implementation accepts (`AcquisitionDriver.acquire`, `acquisition.py:770`):
+
+```python
+from pathlib import Path
+from datetime import datetime, timezone
+from app.services.acquisition import AcquisitionDriver, AcquisitionTransport
+
+C = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz"
+driver = AcquisitionDriver(
+    source="chirps",
+    raw_root=Path(r"%TEMP%\p376e1_scratch\raw"),                 # outside repo; assert in §32.3
+    manifest_path=Path(r"%TEMP%\p376e1_scratch\acquisition_manifest.json"),  # byte-copy; assert exists+hash in §32.3
+    transport=AcquisitionTransport(),                            # anonymous single GET, timeout=120
+)
+record = driver.acquire(
+    retrieval_params={"url": C, "extension": ".tif.gz"},         # bbox optional: chirps require_bounded_scope=False
+    expected_sha256="449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6",
+    acquisition_key=<fresh key re-verified against ALL existing record_ids>,   # see G3
+    source_record_id="chirps-v2.0.2026.08.31.tif.gz",
+    product_version="v2.0",
+    observation_start_utc=datetime(2026, 8, 31, tzinfo=timezone.utc),
+    observation_end_utc=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    available_utc=datetime(2026, 9, 11, 21, 10, 59, tzinfo=timezone.utc),  # caller-supplied recovered value (§28)
+    availability_classification="unknown",
+    availability_source="response_headers.last-modified",
+    availability_derivation=None,
+)
+```
+
+Expected outcome (if executed with byte-identical content): one
+`SKIPPED_EXISTING` record on the scratch manifest whose `storage_path` equals
+`chirps/chirps__v2.x__2026-08-31.tif.gz`; no file written; committed manifest
+and original artifact byte-identical; then mandatory G9 post-run re-hash before
+any decision on the captured header. Not authorized, not executed this phase.
+
+### 32.6 Facts that still require explicit authorization or runtime observation
+
+- G10: an explicit recorded human authorization for the single live GET.
+- The actual `acquisition_key` value at run time (this phase's sample key is
+  illustrative only) plus a repeated G3 membership check.
+- A1–A3 server behavior: reachability, exact headers returned (esp.
+  `Last-Modified`), and any redirect resolution of the final resource.
+- G7 evidence-write location and G9 post-run integrity — runtime only.
+
+### 32.7 Final state and close-out
+
+- HEAD `1fee198`; working tree: only `docs/historical-data-coverage.md`
+  modified (append-only §§28–32; `git diff --check` clean).
+- Manifest SHA-256 `1f2b9434…d43`, contract `1.1.0`, 6 records, blob
+  `07dc2cdd…`; feature contract `1.0.0`
+  (`backend/app/schemas/features.py:71`); CHIRPS SHA-256 `44934651…d9a6`
+  (10,288,665 B); ERA5-Land SHA-256 `af53a81a…4ac9` (127,970 B) — unchanged.
+- Focused offline acquisition suite (`python -m pytest
+  tests/test_acquisition_rig.py tests/test_cds_acquisition.py -q -o addopts=""`
+  from `backend/`): **142 passed**.
+- Secret scan: 117 files against 4 `.env` values, hits = 0.
+- No commit, no push, and no acquisition was performed or authorized in this
+  phase. Q6 production gate stays **CLOSED** (research/replay recovered); Q7
+  remains `EXTERNAL_EVIDENCE_REQUIRED`; temporal production features remain
+  `NEEDS_EVIDENCE`; overall production remains **NO-GO**.
