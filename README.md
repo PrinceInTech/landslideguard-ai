@@ -2,8 +2,14 @@
 
 **AI-Powered Early Warning & Landslide Risk Monitoring System for Northeast India**
 
-Built for the **Smart India Hackathon 2026** — Problem **SIH26001**
-(Ministry of Development of North Eastern Region · Theme: Disaster Management).
+Built for the **Smart India Hackathon 2026**, framed around landslide risk
+monitoring for the Ministry of Development of North Eastern Region (MDoNER).
+
+> **Attribution note:** the problem identifier and ministry above are this
+> project's own framing, not independently verified here. The **official SIH
+> problem statement is not included in this repository**, so the exact problem
+> number, title and sponsoring ministry must be checked against the official SIH
+> source separately.
 
 ---
 
@@ -21,10 +27,16 @@ warnings**, and visualizes everything on an **interactive GIS map**.
 
 ## SIH Problem Statement
 
-> Build an intelligent system that monitors landslide-prone areas in the North
-> Eastern Region of India, analyzes environmental and geographical factors,
-> predicts landslide risk using Machine Learning, provides early warnings, and
-> displays everything through an interactive dashboard. — *SIH26001, MDoNER*
+The project is aimed at this framing: *build an intelligent system that monitors
+landslide-prone areas in the North Eastern Region of India, analyzes
+environmental and geographical factors, predicts landslide risk using machine
+learning, provides early warnings, and displays everything through an
+interactive dashboard.*
+
+> The wording above is this repository's own paraphrase. The **official SIH
+> problem statement is not present in this repository and has not been verified
+> here** — check the official SIH source for the authoritative problem number,
+> title and sponsoring ministry before quoting any of them.
 
 ## Solution
 
@@ -151,7 +163,7 @@ before first run.
 
 ### Running the tests
 
-Tests are run with **pytest**, from `backend/`:
+**Backend** — with **pytest**, from `backend/`:
 
 ```bash
 cd backend
@@ -161,6 +173,34 @@ pytest -q
 The suite creates its own throwaway SQLite database under the system temp
 directory and removes it when the run finishes; it never touches the developer's
 `backend/landslideguard.db` or the Docker runtime `data/landslideguard.db`.
+
+**Frontend** — with **Vitest**, from `frontend/`:
+
+```bash
+cd frontend
+npm test            # single run (vitest run)
+npm run test:watch  # watch mode
+```
+
+The frontend tests run in `jsdom` (config in `frontend/vitest.config.js`) and
+stub `fetch`, so they never make real network calls. They cover the router shell,
+loading/error/empty states, the risk helpers, and the DEMO/LIVE and offline
+surfaces.
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main`
+and on pull requests:
+
+- **Backend job** — installs `backend/requirements.txt` + `requirements-dev.txt`
+  on Python 3.12, runs `python -m pytest -q`, then a whitespace/conflict-marker
+  check and the protected-file verifier.
+- **Frontend job** — installs from `frontend/package-lock.json` with `npm ci` and
+  runs `npm run build`.
+
+> **Note:** CI builds the frontend but does **not** execute the Vitest suite
+> (`npm test`) in the current workflow. Run the frontend tests locally as above.
+> Remote CI status is **not verified** from this repository.
 
 ## Environment Variables
 
@@ -176,9 +216,9 @@ The ones that matter most:
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
 | `DATA_MODE` | `DEMO` | `LIVE` requires `OPENWEATHER_API_KEY` |
-| `JWT_SECRET` | insecure dev value | **must** be overridden when `ENVIRONMENT=production` |
-| `DEMO_ADMIN_PASSWORD` | `admin123` | **must** be changed when `ENVIRONMENT=production` |
-| `ENVIRONMENT` | `development` | `production` enables the fail-fast checks above |
+| `JWT_SECRET` | insecure dev value | **must** be overridden outside local dev (`ENVIRONMENT` not `development`/`dev`/`local`/`test`) |
+| `DEMO_ADMIN_PASSWORD` | `admin123` | **must** be changed outside local dev |
+| `ENVIRONMENT` | `development` | any value other than `development`/`dev`/`local`/`test` enables the fail-fast secret checks |
 | `OPENWEATHER_API_KEY` | _(empty)_ | unset ⇒ deterministic DEMO weather |
 | `CORS_ORIGINS` | localhost:5173,127.0.0.1:5173,localhost:8080 | only needed for cross-origin browser calls |
 | `VITE_API_URL` | _(empty)_ | build-time; set only if the API is on a different origin |
@@ -211,6 +251,12 @@ npm run dev
 
 Open http://localhost:5173. The dev server proxies `/api` to
 `http://127.0.0.1:8000`; override with `VITE_PROXY_TARGET`.
+
+> **Authentication required:** the dashboard and all other app pages
+> (`/dashboard`, `/map`, `/prediction`, `/alerts`, `/analytics`, `/locations`,
+> `/ai-insights`, `/admin`, `/settings`) are auth-gated. Opening them while
+> signed out redirects to `/login` (`frontend/src/layouts/DashboardLayout.jsx`),
+> so sign in first with the demo credentials below.
 
 > **Port watch:** if Vite auto-selects another port because 5173 is busy, open
 > that port instead — the proxy still works. If you use a non-default port, add
@@ -289,6 +335,30 @@ can re-run this pipeline through `POST /api/admin/retrain`.
   to switch to live conditions — the UI badge flips to **LIVE DATA**.
 - Fallbacks mean the app never crashes without a model, API key, or DB.
 
+## Offline & Poor Connectivity
+
+The UI degrades gracefully when the browser loses connectivity:
+
+- **Browser connectivity is not the same as backend availability.** The
+  Online/Offline badge reflects the *browser's* network state only. Backend
+  reachability is confirmed per request (error states and the DEMO/LIVE source
+  badge), so "Online" does not guarantee the API is reachable.
+- **Cached dashboard summary, always labelled stale.** After a successful load
+  the dashboard stores a **sanitized, non-sensitive** aggregate snapshot in
+  `localStorage` (`frontend/src/services/offlineCache.js`). It deliberately
+  never stores tokens, user data, the alert list, monitored locations or
+  predictions. Offline, that snapshot is shown as a read-only view headed
+  `OFFLINE — STALE / LAST UPDATED …`.
+- **Backend-dependent writes are disabled offline.** Refresh, predictions,
+  alert changes, sign-in and admin operations are disabled while offline and
+  re-enable automatically when connectivity returns.
+- **The app shell is cached in production builds only.** A service worker
+  (`frontend/public/sw.js`) caches same-origin GET navigations and static
+  `/assets/` so the app can load offline. It **never** caches `/api/` responses
+  or non-GET requests. It is registered only in production builds
+  (`import.meta.env.PROD` in `frontend/src/main.jsx`), so `npm run dev` does not
+  install it.
+
 ## API Documentation
 
 Full reference in **[docs/api.md](docs/api.md)**. Summary:
@@ -304,15 +374,22 @@ POST /api/alerts                 PUT  /api/alerts/{alert_id}
 GET  /api/analytics              GET  /api/weather/{location_name}
 POST /api/auth/login             POST /api/auth/register
 GET  /api/auth/me
+POST /api/extract                POST /api/provenance/validate
 GET  /api/admin/stats            GET  /api/admin/alerts
 POST /api/admin/upload-dataset   POST /api/admin/retrain
 POST /api/admin/trigger-predict  GET  /api/admin/settings
 ```
 
-That is 25 API operations plus a `GET /` service banner.
+That is 27 API operations plus a `GET /` service banner.
 
-Routes under `/api/admin/*` require `Authorization: Bearer <token>` **and** the
-`admin` role; other routes are public.
+Read endpoints (`GET /api/locations`, `/risk-summary`, `/analytics`, `/alerts`,
+`/predictions`) are public. Write endpoints — `POST`/`PUT`/`DELETE` on locations
+and alerts, `POST /api/predict`, `POST /api/predict/location/{id}`,
+`POST /api/extract` and `POST /api/provenance/validate` — require a valid
+`Authorization: Bearer <token>` (any authenticated role). Routes under
+`/api/admin/*` additionally require the
+`admin` role. See **[docs/api.md](docs/api.md)** for the full authorization
+model.
 
 ## Demo Credentials
 
@@ -323,6 +400,13 @@ password: admin123
 
 Seeded on an empty database, bcrypt-hashed, JWT-authenticated. Override with
 `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD`.
+
+> **Local demo use only.** These default credentials are published in this
+> repository and the login page (`frontend/src/pages/Login.jsx`) for convenient
+> local/judge demos. They **must** be overridden (a non-default
+> `DEMO_ADMIN_PASSWORD` and a real `JWT_SECRET`) before any non-local deployment;
+> with `ENVIRONMENT` set outside the local values the backend refuses to boot on
+> the insecure defaults.
 
 > **Note:** `POST /api/auth/register` creates accounts with the least-privileged
 > `viewer` role. Self-service signup can never mint an admin — admin accounts are
@@ -335,17 +419,43 @@ Seeded on an empty database, bcrypt-hashed, JWT-authenticated. Override with
 curl http://localhost:8000/api/health
 ```
 
-The Docker stack has been validated end-to-end with an automated suite
-(auth, role enforcement, risk summary, alerts workflow, analytics, prediction
-monotonicity across LOW→CRITICAL, admin retrain, restart-safe seeding,
-read-path write elimination, and CORS).
+The behaviours above (auth, role enforcement, risk summary, the alerts workflow,
+analytics, prediction monotonicity across LOW→CRITICAL, admin retrain,
+restart-safe seeding, read-path write elimination and CORS) are exercised by the
+**in-process backend test suite** using `httpx.TestClient` (`backend/tests/`) —
+not by a running Docker stack.
+
+> **Not verified here:** the `docker compose` stack has **not** been run and
+> validated end-to-end in this repository's recorded evidence. Treat the Docker
+> and cloud deployment sections below as documented setup steps, not as tested
+> end-to-end guarantees.
 
 ## Screenshots
 
-> Add `docs/screenshots/*.png` here. Quick reference for judges:
-> Landing → Dashboard → Risk Map → Prediction → Alerts → Analytics → Admin.
+Real captures from a running instance are stored under **`docs/screenshots/`**.
+They were taken at a 1440×900 desktop viewport against a locally-running stack
+in DEMO data mode (see **[docs/demo.md](docs/demo.md)** for the demo login and
+route walkthrough):
 
-*(Screenshots placeholder — capture from the running app.)*
+| Page | Route | File |
+| ---- | ----- | ---- |
+| Landing | `/` | [`docs/screenshots/landing.png`](docs/screenshots/landing.png) |
+| Login | `/login` | [`docs/screenshots/login.png`](docs/screenshots/login.png) |
+| Dashboard | `/dashboard` | [`docs/screenshots/dashboard.png`](docs/screenshots/dashboard.png) |
+| Risk Map | `/map` | [`docs/screenshots/risk-map.png`](docs/screenshots/risk-map.png) |
+| Prediction | `/prediction` | [`docs/screenshots/prediction.png`](docs/screenshots/prediction.png) |
+| Alerts | `/alerts` | [`docs/screenshots/alerts.png`](docs/screenshots/alerts.png) |
+| Analytics | `/analytics` | [`docs/screenshots/analytics.png`](docs/screenshots/analytics.png) |
+| AI Insights | `/ai-insights` | [`docs/screenshots/ai-insights.png`](docs/screenshots/ai-insights.png) |
+| Locations | `/locations` | [`docs/screenshots/locations.png`](docs/screenshots/locations.png) |
+| Admin | `/admin` | [`docs/screenshots/admin.png`](docs/screenshots/admin.png) |
+| Settings | `/settings` | [`docs/screenshots/settings.png`](docs/screenshots/settings.png) |
+
+The `login.png` capture shows the login form with the password field cleared and
+the plaintext demo-credential hint hidden — the demo credentials are **not**
+visible in that image. Make sure these files are committed before relying on any
+submission-generated link. The suggested page set and exact routes originate in
+**[docs/demo.md → Screenshot checklist](docs/demo.md#5-screenshot-checklist)**.
 
 ## Deployment
 
@@ -382,6 +492,39 @@ routes like `/dashboard` resolve to `index.html` instead of 404ing.
 3. `VITE_API_URL` is inlined at **build** time, so redeploy the frontend after
    changing the backend URL.
 
+### Auth rate limiting and reverse proxies
+
+`POST /api/auth/login` and `POST /api/auth/register` are guarded by an
+**in-process, per-client-address** fixed-window limiter
+([`backend/app/services/rate_limit.py`](backend/app/services/rate_limit.py);
+defaults 10 requests/60 s for login and 5/300 s for registration, overridable
+with the `AUTH_*` environment variables). A blocked attempt returns `429` with a
+`Retry-After` header and a generic body that does not reveal whether an account
+exists. Client identity is the transport peer address only — forwarding headers
+such as `X-Forwarded-For` are deliberately ignored so a caller cannot forge new
+buckets by rotating a header.
+
+This is a **best-effort, per-process** control, **not** a distributed one:
+
+- Counters live in the process memory, reset on restart, and are **not shared
+  across workers or replicas** — with N workers the effective limit is roughly N×
+  the configured value.
+- Behind the bundled nginx (or any proxy that terminates the connection) every
+  caller can share the proxy's address and therefore a **single bucket**, so
+  legitimate users may be throttled together.
+- Storage is bounded (4096 keys); a flood of distinct source addresses can evict
+  existing buckets.
+
+For any multi-worker, multi-replica or public deployment, add a **shared or
+edge-level** limit at the proxy/gateway or a central store, covering both login
+and registration and returning the same generic `429`. If per-client identity is
+required, enable proxy-header trust (uvicorn `--proxy-headers` /
+`--forwarded-allow-ips`) **only for known trusted proxies** — never trust
+forwarded headers from arbitrary clients. The current single-process deployments
+(`uvicorn` without `--workers` in `backend/Dockerfile` and `render.yaml`) do not
+need proxy headers for the limiter to work, and none of this changes the app's
+authentication behavior.
+
 ## Future Scope
 
 - ISRO / NRSC satellite & remote-sensing feeds
@@ -406,4 +549,7 @@ routes like `/dashboard` resolve to `index.html` instead of 404ing.
 
 ---
 
-*Project for Smart India Hackathon 2026 · SIH26001 · MDoNER.*
+*Framed for Smart India Hackathon 2026 around landslide risk monitoring for
+the North Eastern Region. The problem identifier and sponsoring ministry are
+this project's own framing — see the attribution note at the top of this file
+and verify against the official SIH source.*

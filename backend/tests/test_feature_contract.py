@@ -11,7 +11,7 @@ Every listed contract property gets at least one direct test: the leakage
 gate, nodata semantics, CRS/bbox enforcement, rolling-window honesty, artifact
 identity (SHA-256), and provenance propagation.
 """
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +28,7 @@ from app.schemas.features import (
     CHIRPS_NODATA,
 COORDINATE_PRECISION_BY_SOURCE,
     FEATURE_SPECS,
+    FeatureDayProvenance,
     FeatureExtractionRequest,
     FeatureProvenance,
     FeatureStatus,
@@ -41,6 +42,7 @@ COORDINATE_PRECISION_BY_SOURCE,
 )
 from app.services.features import (
     FeatureContractError,
+    _leakage_rejected_note,
     artifact_path,
     build_feature_provenance,
     chirps_daily_coverage_days,
@@ -221,6 +223,116 @@ def _request(
 
 
 # ---------------------------------------------------------------------------
+# 3.7.8F. Multi-day CHIRPS rolling aggregation (approved A/A1/A2/B/C1-C4/D)
+# ---------------------------------------------------------------------------
+
+ANCHOR_DATE = date(2026, 8, 31)
+
+
+def _day_record(
+    day: date,
+    *,
+    sha: str,
+    storage_path: str,
+    product_version: str = "v2.0",
+    availability_classification: str | None = "provider_issued",
+    available_utc: datetime | None = datetime(2026, 9, 11, 21, 10, 59, tzinfo=UTC),
+    seed: str = "",
+) -> AcquisitionRecord:
+    """A synthetic kept REAL daily CHIRPS record for ``day``.
+
+    The referenced file must exist under the rollup root and ``sha`` must be its
+    recomputed digest. ``acquired_utc`` increases with day, so the anchor record
+    (max acquired_utc) is always ANCHOR_DATE regardless of manifest ordering.
+    """
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    return _chirps_record(
+        record_id=(
+            f"REAL-chirps-v2.0-{day.isoformat()}" + (f"-{seed}" if seed else "")
+        ),
+        source_record_id=(
+            f"chirps-v2.0.{day.strftime('%Y.%m.%d')}.tif.gz"
+            + (f"-{seed}" if seed else "")
+        ),
+        product_version=product_version,
+        observation_start_utc=start,
+        observation_end_utc=start + timedelta(days=1),
+        storage_path=storage_path,
+        sha256=sha,
+        acquired_utc=datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
+        + timedelta(hours=30 - (ANCHOR_DATE - day).days),
+        available_utc=available_utc,
+        availability_classification=availability_classification,
+    )
+
+
+def _window_days(window_days: int) -> list[date]:
+    """Ascending inclusive [D-(N-1), D] for the anchor day."""
+    return [
+        ANCHOR_DATE - timedelta(days=offset)
+        for offset in range(window_days - 1, -1, -1)
+    ]
+
+
+def _records_for_days(
+    days: list[date],
+    written: dict[date, tuple[str, str]],
+    *,
+    product_version: str = "v2.0",
+    availability_classification: str | None = "provider_issued",
+    available_utc: datetime | None = datetime(2026, 9, 11, 21, 10, 59, tzinfo=UTC),
+) -> list[AcquisitionRecord]:
+    return [
+        _day_record(
+            day,
+            sha=written[day][1],
+            storage_path=written[day][0],
+            product_version=product_version,
+            availability_classification=availability_classification,
+            available_utc=available_utc,
+        )
+        for day in days
+    ]
+
+
+@pytest.fixture()
+def rollup_root(tmp_path_factory):
+    """Scratch raw root holding checksummed per-day fake CHIRPS artifacts."""
+    root = tmp_path_factory.mktemp("rollup")
+    written: dict[date, tuple[str, str]] = {}
+    for offset in range(0, 35):
+        day = ANCHOR_DATE - timedelta(days=offset)
+        rel = f"chirps/chirps__v2.x__{day.isoformat()}.tif.gz"
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"fake-chirps-day-{day.isoformat()}".encode())
+        written[day] = (rel, sha256_of(path))
+    return root, written
+
+
+def _grid_for_day(wet: float | None):
+    """Bounded 0.5-deg fixture grid; ``wet`` None leaves (28.0, 90.0) nodata."""
+    lats = np.arange(29.5, 20.99, -0.5)
+    lons = np.arange(88.0, 97.51, 0.5)
+    raw = np.full((lats.size, lons.size), CHIRPS_NODATA, dtype=float)
+    if wet is not None:
+        raw[3, 4] = wet
+    raw[1, 8] = 0.0
+    raw[5, 16] = 17.0
+    return raw, lats, lons
+
+
+def _decoder_for(values: dict[date, float | None]):
+    """Per-day fixture decoder; the day is read from the artifact filename."""
+
+    def decode(path: Path):
+        slug = Path(path).name.split(".tif.gz")[0].split("__")[-1]
+        return _grid_for_day(values[date.fromisoformat(slug)])
+
+    return decode
+
+
+# ---------------------------------------------------------------------------
 # 1-4. Provenance / leakage gate
 # ---------------------------------------------------------------------------
 
@@ -286,6 +398,59 @@ def test_available_after_cutoff_rejected():
         datetime(2026, 9, 5, 0, 0, tzinfo=UTC),
     )
     assert status is FeatureStatus.REJECTED_LEAKAGE
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        (datetime(2026, 8, 31, tzinfo=UTC), None),
+        (None, datetime(2026, 9, 1, tzinfo=UTC)),
+        (None, None),
+    ],
+)
+def test_leakage_gate_fails_closed_on_missing_observation_window(start, end):
+    # Phase 3.7.11 hardening of audit finding F1: a record with no observable
+    # window is not provably non-leaky, so the gate must fail closed instead of
+    # comparing a None against the cutoff (which raised an untyped TypeError).
+    status = evaluate_leakage(start, end, datetime(2026, 9, 11, tzinfo=UTC), VALID_CUTOFF)
+    assert status is FeatureStatus.REJECTED_LEAKAGE
+
+
+def test_leakage_rejected_note_explains_missing_window():
+    record = _chirps_record(observation_start_utc=None, observation_end_utc=None)
+    note = _leakage_rejected_note(record, VALID_CUTOFF)
+    assert "not fully recorded" in note
+
+
+def test_run_extraction_missing_observation_window_fails_typed_without_decode(raw_root):
+    # Phase 3.7.11 F1: the public entry point must surface a typed contract
+    # error (never a pydantic ValidationError or a TypeError) and must not read
+    # any pixel from an artifact whose observation window is unrecorded.
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha,
+        storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz",
+        observation_start_utc=None,
+        observation_end_utc=None,
+    )
+    calls = []
+
+    def recorder(path):
+        calls.append(path)
+        return _chirps_grid()
+
+    with pytest.raises(FeatureContractError, match="no observation window"):
+        run_extraction(
+            _request(
+                "chirps",
+                Position(latitude=28.0, longitude=90.0),
+                features=["precipitation_daily_mm"],
+            ),
+            manifest=_manifest(record),
+            chirps_decoder=recorder,
+            raw_root=root,
+        )
+    assert calls == []
 
 
 def test_production_policy_rejects_unverified_availability():
@@ -1118,3 +1283,624 @@ def test_real_chirps_pixels_confirm_mm_units_nodata_and_day():
     assert valid.max() < 1000.0
     assert (valid == 0.0).any()  # measured dry cells are valid zeros
     assert valid.mean() == pytest.approx(19.2, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.7.7E: missing/empty/malformed ledger fail-loud paths
+# ---------------------------------------------------------------------------
+
+
+def test_run_extraction_empty_ledger_fails_loud():
+    """An explicitly empty in-memory ledger must never yield silent zero features."""
+    manifest = _manifest()
+    assert manifest is not None and manifest.records == []
+    with pytest.raises(FeatureContractError, match="no kept REAL artifact in the acquisition ledger"):
+        run_extraction(
+            _request("chirps", Position(latitude=28.0, longitude=90.0)),
+            manifest=manifest,
+        )
+
+
+def test_run_extraction_only_failed_records_fails_loud():
+    """Records that never reached a kept state are not resolvable artifacts."""
+    failed = _chirps_record(
+        status=AcquisitionStatus.FAILED,
+        sha256=None,
+        file_size_bytes=None,
+        storage_path=None,
+        error="download failed: 503 unavailable",
+    )
+    manifest = _manifest(failed)
+    assert manifest.records and manifest.records[0].storage_path is None
+    with pytest.raises(FeatureContractError, match="no kept REAL artifact in the acquisition ledger"):
+        run_extraction(
+            _request("chirps", Position(latitude=28.0, longitude=90.0)),
+            manifest=manifest,
+        )
+
+
+def test_load_manifest_missing_path_returns_empty_ledger(tmp_path):
+    """Pins the documented loader bootstrap: missing file -> empty ledger, no I/O."""
+    from app.services.acquisition import load_acquisition_manifest
+
+    missing = tmp_path / "no-such-ledger" / "acquisition_manifest.json"
+    assert not missing.exists()
+    loaded = load_acquisition_manifest(missing)
+    assert loaded.records == []
+    assert any("initialised empty" in note for note in loaded.notes)
+    assert not missing.exists()
+    assert not missing.parent.exists()
+
+
+def test_load_manifest_malformed_raises_manifest_error(tmp_path):
+    """Corrupt ledger JSON surfaces as ManifestError, not silent fallback."""
+    from app.services.acquisition import ManifestError, load_acquisition_manifest
+
+    bad = tmp_path / "malformed_manifest.json"
+    bad.write_text("{ this is not valid json ]", encoding="utf-8")
+    with pytest.raises(ManifestError, match="acquisition manifest invalid"):
+        load_acquisition_manifest(bad)
+    assert bad.exists()  # the malformed test blob is untouched
+
+
+def test_run_extraction_empty_feature_list_returns_no_features(raw_root, chirps_decoder):
+    """requested_features=[] is a schema-valid deliberate zero-output request.
+
+    It must still resolve the record and re-verify artifact identity, returning
+    an empty feature list rather than an unverified or REJECTED_LEAKAGE set.
+    """
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(sha256=chirp_sha, storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz")
+    manifest = _manifest(record)
+    result = run_extraction(
+        _request("chirps", Position(latitude=28.0, longitude=90.0), features=[]),
+        manifest=manifest,
+        chirps_decoder=chirps_decoder,
+        raw_root=root,
+    )
+    assert result.features == []
+    assert result.artifact_sha256 == chirp_sha
+    assert result.acquisition_record_id == record.record_id
+
+
+# ---------------------------------------------------------------------------
+# 3.7.8F. Multi-day CHIRPS rolling aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_rolling_3d_sums_exact_window(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    values = {day: float(index + 1) for index, day in enumerate(days)}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == pytest.approx(6.0)
+    assert feature.unit == "mm"
+    provenance = feature.provenance
+    assert provenance.observation_start_utc.date() == ANCHOR_DATE
+    assert [entry.observation_start_utc.date() for entry in provenance.days] == days
+    assert [entry.artifact_sha256 for entry in provenance.days] == [
+        record.sha256 for record in records
+    ]
+    assert provenance.artifact_sha256 == records[-1].sha256
+    assert provenance.acquisition_record_id == records[-1].record_id
+
+
+@pytest.mark.parametrize("window_days", [7, 14, 30])
+def test_rolling_long_windows_sum_each_required_day(rollup_root, window_days):
+    root, written = rollup_root
+    days = _window_days(window_days)
+    records = _records_for_days(days, written)
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=[f"precipitation_{window_days}d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == pytest.approx(float(window_days))
+    assert len(feature.provenance.days) == window_days
+
+
+def test_rolling_float64_sum_is_unrounded(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    values = {days[0]: 0.1, days[1]: 0.1, days[2]: 0.1}
+    records = _records_for_days(days, written)
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == sum(values.values())
+    assert feature.value != 0.3
+
+
+@pytest.mark.parametrize("nodata_index", [0, 1, 2])
+def test_rolling_nodata_each_position_missing(rollup_root, nodata_index):
+    root, written = rollup_root
+    days = _window_days(3)
+    values = {day: 1.0 for day in days}
+    values[days[nodata_index]] = None
+    records = _records_for_days(days, written)
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.MISSING
+    assert feature.value is None
+    assert days[nodata_index].isoformat() in feature.note
+
+
+@pytest.mark.parametrize("missing_index", [0, 3, 5])
+def test_rolling_missing_each_position_insufficient(rollup_root, missing_index):
+    root, written = rollup_root
+    days = _window_days(7)
+    present = [day for index, day in enumerate(days) if index != missing_index]
+    records = _records_for_days(present, written)
+    values = {day: 1.0 for day in present}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_7d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE
+    assert feature.value is None
+    assert days[missing_index].isoformat() in feature.note
+    assert "never zero-filled" in feature.note
+
+
+def test_rolling_same_sha_duplicate_dedupes_to_one_day(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    records.insert(
+        1,
+        _day_record(
+            days[1],
+            sha=written[days[1]][1],
+            storage_path=written[days[1]][0],
+            seed="dup",
+        ),
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == pytest.approx(3.0)
+    assert len(feature.provenance.days) == 3
+
+
+def test_rolling_conflicting_sha_duplicate_raises_stable_order(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    dup_rel = "chirps/chirps__v2.x__2026-08-30-dup.tif.gz"
+    dup_path = root / dup_rel
+    dup_path.parent.mkdir(parents=True, exist_ok=True)
+    dup_path.write_bytes(b"fake-chirps-day-2026-08-30-DUPLICATE")
+    dup_sha = sha256_of(dup_path)
+    records.insert(1, _day_record(days[1], sha=dup_sha, storage_path=dup_rel, seed="a"))
+    records.insert(1, _day_record(days[1], sha=dup_sha, storage_path=dup_rel, seed="b"))
+    values = {day: 1.0 for day in days}
+    with pytest.raises(FeatureContractError) as excinfo:
+        run_extraction(
+            _request(
+                "chirps",
+                Position(latitude=28.0, longitude=90.0),
+                features=["precipitation_3d_mm"],
+            ),
+            manifest=_manifest(*records),
+            chirps_decoder=_decoder_for(values),
+            raw_root=root,
+        )
+    message = str(excinfo.value)
+    assert "2026-08-30" in message
+    assert "different SHA-256" in message
+    ids = ["REAL-chirps-v2.0-2026-08-30-a", "REAL-chirps-v2.0-2026-08-30-b"]
+    assert all(record_id in message for record_id in ids)
+    assert message.index(ids[0]) < message.index(ids[1])
+
+
+def test_rolling_deterministic_under_shuffled_manifest(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    values = {days[0]: 0.5, days[1]: 1.5, days[2]: 2.5}
+    records = _records_for_days(days, written)
+    forward = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    ).features[0]
+    backward = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*reversed(records)),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    ).features[0]
+    assert forward.status is FeatureStatus.VALID
+    assert backward.status is FeatureStatus.VALID
+    assert forward.value == backward.value
+    assert forward.value == pytest.approx(4.5)
+    assert [entry.observation_start_utc for entry in forward.provenance.days] == [
+        entry.observation_start_utc for entry in backward.provenance.days
+    ]
+
+
+def test_rolling_incompatible_product_version_insufficient(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    records[0] = _day_record(
+        days[0],
+        sha=written[days[0]][1],
+        storage_path=written[days[0]][0],
+        product_version="v1.0",
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE
+    assert feature.value is None
+    assert days[0].isoformat() in feature.note
+
+
+def test_rolling_mixed_preliminary_final_vintages_insufficient(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    records[0] = _day_record(
+        days[0],
+        sha=written[days[0]][1],
+        storage_path=written[days[0]][0],
+        product_version="v2.1",
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE
+    assert feature.value is None
+    assert "mixed product vintages" in feature.note
+
+
+def test_rolling_production_requires_provider_issued_every_day(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    records[1] = _day_record(
+        days[1],
+        sha=written[days[1]][1],
+        storage_path=written[days[1]][0],
+        availability_classification="derived",
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+            policy="production",
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.REJECTED_LEAKAGE
+    assert feature.value is None
+    assert days[1].isoformat() in feature.note
+
+
+def test_rolling_research_replay_accepts_derived_labelled_days(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = [
+        _day_record(
+            day,
+            sha=written[day][1],
+            storage_path=written[day][0],
+            availability_classification="derived",
+        )
+        for day in days
+    ]
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("policy", ["research_replay", "production"])
+def test_rolling_missing_available_utc_rejects_both_policies(rollup_root, policy):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    records[0] = _day_record(
+        days[0],
+        sha=written[days[0]][1],
+        storage_path=written[days[0]][0],
+        available_utc=None,
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+            policy=policy,
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.REJECTED_LEAKAGE
+    assert feature.value is None
+
+
+def test_rolling_rejected_day_rejects_every_overlapping_window(rollup_root):
+    root, written = rollup_root
+    days = _window_days(7)
+    records = _records_for_days(days, written)
+    records[4] = _day_record(
+        days[4],
+        sha=written[days[4]][1],
+        storage_path=written[days[4]][0],
+        availability_classification="derived",
+    )
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=[
+                "precipitation_daily_mm",
+                "precipitation_3d_mm",
+                "precipitation_7d_mm",
+            ],
+            policy="production",
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    by_name = {feature.feature_name: feature for feature in result.features}
+    assert by_name["precipitation_daily_mm"].status is FeatureStatus.VALID
+    assert by_name["precipitation_3d_mm"].status is FeatureStatus.REJECTED_LEAKAGE
+    assert by_name["precipitation_7d_mm"].status is FeatureStatus.REJECTED_LEAKAGE
+    assert all(
+        by_name[name].value is None
+        for name in ("precipitation_3d_mm", "precipitation_7d_mm")
+    )
+
+
+def test_rolling_sha_verified_before_any_pixel_decode(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    (root / written[days[1]][0]).write_bytes(b"tampered-chirps-bytes")
+    calls = []
+
+    def recorder(path):
+        calls.append(path)
+        return _grid_for_day(1.0)
+
+    with pytest.raises(FeatureContractError, match="SHA-256 mismatch"):
+        run_extraction(
+            _request(
+                "chirps",
+                Position(latitude=28.0, longitude=90.0),
+                features=["precipitation_3d_mm"],
+            ),
+            manifest=_manifest(*records),
+            chirps_decoder=recorder,
+            raw_root=root,
+        )
+    tampered_name = Path(written[days[1]][0]).name
+    assert all(Path(call).name != tampered_name for call in calls)
+
+
+def test_rolling_provenance_per_day_fields_and_anchor(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    provenance = result.features[0].provenance
+    assert len(provenance.days) == 3
+    assert isinstance(provenance.days[0], FeatureDayProvenance)
+    for entry, record in zip(provenance.days, records):
+        assert entry.acquisition_record_id == record.record_id
+        assert entry.source_record_id == record.source_record_id
+        assert entry.artifact_sha256 == record.sha256
+        assert entry.available_utc == record.available_utc
+        assert entry.availability_classification == record.availability_classification
+    assert provenance.artifact_sha256 == provenance.days[-1].artifact_sha256
+    assert provenance.acquisition_record_id == provenance.days[-1].acquisition_record_id
+    assert provenance.observation_start_utc == provenance.days[-1].observation_start_utc
+
+
+def test_single_day_provenance_days_omitted(raw_root, chirps_decoder):
+    root, chirp_sha, _ = raw_root
+    record = _chirps_record(
+        sha256=chirp_sha, storage_path="chirps/chirps__v2.x__2026-08-31.tif.gz"
+    )
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_daily_mm", "precipitation_1d_mm"],
+        ),
+        manifest=_manifest(record),
+        chirps_decoder=chirps_decoder,
+        raw_root=root,
+    )
+    assert result.features
+    for feature in result.features:
+        assert feature.provenance.days is None
+
+
+def test_rolling_anchor_leakage_shortcircuits_all_windows(rollup_root):
+    root, written = rollup_root
+    days = _window_days(3)
+    records = _records_for_days(days, written)
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            cutoff=datetime(2026, 8, 31, tzinfo=UTC),
+            features=[
+                "precipitation_daily_mm",
+                "precipitation_1d_mm",
+                "precipitation_3d_mm",
+                "precipitation_7d_mm",
+            ],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    assert all(
+        feature.status is FeatureStatus.REJECTED_LEAKAGE for feature in result.features
+    )
+    assert all(feature.value is None for feature in result.features)
+
+
+def test_rolling_anchor_preserved_when_dedupe_would_pick_incompatible_duplicate(rollup_root):
+    # Phase 3.7.11 hardening of audit finding F2: the version-agnostic same-day
+    # dedupe (lowest record_id) can pick an incompatible duplicate for the
+    # anchor day, which previously left the anchor slot empty and later fed a
+    # per-day list that did not end on the anchor (a pydantic ValidationError).
+    # The identity-verified anchor must always be its own day's selected record.
+    root, written = rollup_root
+    days = _window_days(3)
+    anchor_day = days[-1]
+    records = [
+        record
+        for record in _records_for_days(days, written)
+        if record.observation_start_utc.date() != anchor_day
+    ]
+    good = _day_record(
+        anchor_day,
+        sha=written[anchor_day][1],
+        storage_path=written[anchor_day][0],
+        product_version="v2.0",
+        seed="zzz",
+    ).model_copy(update={"acquired_utc": datetime(2026, 10, 10, tzinfo=UTC)})
+    bad = _day_record(
+        anchor_day,
+        sha=written[anchor_day][1],
+        storage_path=written[anchor_day][0],
+        product_version="v1.0",
+    )
+    records.extend([good, bad])
+    values = {day: 1.0 for day in days}
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.0, longitude=90.0),
+            features=["precipitation_3d_mm"],
+        ),
+        manifest=_manifest(*records),
+        chirps_decoder=_decoder_for(values),
+        raw_root=root,
+    )
+    feature = result.features[0]
+    assert feature.status is FeatureStatus.VALID
+    assert feature.value == pytest.approx(3.0)
+    assert len(feature.provenance.days) == 3
+    assert feature.provenance.days[-1].acquisition_record_id == good.record_id
+    assert feature.provenance.acquisition_record_id == good.record_id
+    assert resolve_acquired_record(_manifest(*records), "chirps").record_id == good.record_id

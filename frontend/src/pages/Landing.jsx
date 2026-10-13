@@ -97,7 +97,7 @@ export default function Landing() {
             </div>
             <div>
               <p className="text-sm font-extrabold leading-tight">LandslideGuard AI</p>
-              <p className="text-[10px] uppercase tracking-wider text-slate-500">MDoNER · SIH 2026</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">Smart India Hackathon Project</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -116,7 +116,7 @@ export default function Landing() {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(245,158,11,0.12),transparent_55%)]" />
         <div className="mx-auto max-w-7xl px-5 pb-20 pt-20 text-center lg:pt-28">
           <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-xs font-bold text-amber-400">
-            <Radar className="h-3.5 w-3.5" /> Smart India Hackathon 2026 · Problem SIH26001
+            <Radar className="h-3.5 w-3.5" /> Smart India Hackathon Project
           </div>
           <h1 className="mx-auto max-w-4xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             AI-Powered Landslide{' '}
@@ -158,7 +158,7 @@ export default function Landing() {
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-red-400">The Problem</p>
             <h2 className="mt-3 text-2xl font-extrabold lg:text-3xl">
-              2,300+ landslides a year. Mostly preventable losses.
+              Landslides threaten communities across Northeast India year after year.
             </h2>
             <p className="mt-4 text-slate-400">
               Northeast India sits in one of the most landslide-prone zones on Earth. Monsoon rains,
@@ -271,7 +271,7 @@ export default function Landing() {
           <div className="flex items-center gap-2">
             <Mountain className="h-5 w-5 text-brand" />
             <p className="text-sm font-bold">LandslideGuard AI</p>
-            <span className="text-xs text-slate-500">· SIH 2026 · MDoNER</span>
+            <span className="text-xs text-slate-500">· Smart India Hackathon Project</span>
           </div>
           <p className="text-xs text-slate-500">
             AI-Powered Early Warning &amp; Landslide Risk Monitoring System for Northeast India

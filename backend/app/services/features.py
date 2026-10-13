@@ -43,7 +43,7 @@ fixtures.
 """
 import gzip
 import struct
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -75,6 +75,7 @@ from app.schemas.features import (
     ERA5_LAND_VARIABLE_MAP,
     ERA5_LONGITUDE_COUNT,
     FEATURE_SPECS,
+    FeatureDayProvenance,
     FeatureExtractionRequest,
     FeatureExtractionResult,
     FeatureKind,
@@ -123,8 +124,8 @@ _ALLOWED_AVAILABILITY_POLICIES = ("research_replay", "production")
 
 
 def evaluate_leakage(
-    observation_start_utc: datetime,
-    observation_end_utc: datetime,
+    observation_start_utc: datetime | None,
+    observation_end_utc: datetime | None,
     available_utc: datetime | None,
     prediction_cutoff_utc: datetime,
 ) -> FeatureStatus:
@@ -132,12 +133,16 @@ def evaluate_leakage(
     be at or before the prediction cutoff.
 
     Returns ``VALID`` or ``REJECTED_LEAKAGE``. The same inputs always return
-    the same status. Naive datetimes are rejected, never converted.
+    the same status. Naive datetimes are rejected, never converted. A record
+    with no observable window is not provably non-leaky, so it fails closed
+    (``REJECTED_LEAKAGE``) rather than comparing against a missing datetime.
     """
     _require_aware(observation_start_utc, "observation_start_utc")
     _require_aware(observation_end_utc, "observation_end_utc")
     _require_aware(available_utc, "available_utc")
     _require_aware(prediction_cutoff_utc, "prediction_cutoff_utc")
+    if observation_start_utc is None or observation_end_utc is None:
+        return FeatureStatus.REJECTED_LEAKAGE
     if observation_end_utc > prediction_cutoff_utc:
         return FeatureStatus.REJECTED_LEAKAGE
     if available_utc is not None and available_utc > prediction_cutoff_utc:
@@ -178,7 +183,13 @@ def _leakage_rejected_note(
     record: AcquisitionRecord, prediction_cutoff_utc: datetime
 ) -> str:
     reasons = []
-    if record.observation_end_utc is not None and record.observation_end_utc > prediction_cutoff_utc:
+    if record.observation_start_utc is None or record.observation_end_utc is None:
+        reasons.append(
+            "the observation window is not fully recorded, so the observation "
+            "period cannot be placed against prediction_cutoff_utc "
+            f"{prediction_cutoff_utc.isoformat()}"
+        )
+    elif record.observation_end_utc > prediction_cutoff_utc:
         reasons.append(
             f"observation_end_utc {record.observation_end_utc.isoformat()} is after "
             f"prediction_cutoff_utc {prediction_cutoff_utc.isoformat()}"
@@ -405,6 +416,7 @@ def build_feature_provenance(
     prediction_cutoff_utc: datetime,
     transform: str,
     derived_at_utc: datetime | None = None,
+    days: list[FeatureDayProvenance] | None = None,
 ) -> FeatureProvenance:
     if not record.sha256:
         raise FeatureContractError(
@@ -446,6 +458,7 @@ def build_feature_provenance(
         license_attribution=record.license_attribution,
         transform=transform,
         derived_at_utc=derived_at_utc or utcnow_aware(),
+        days=days,
     )
 
 
@@ -492,6 +505,118 @@ def chirps_daily_coverage_days(
     return len(days)
 
 
+def _is_daily_candidate(record: AcquisitionRecord) -> bool:
+    """True when the record is a traceable, kept REAL one-day observation.
+
+    A rolling window can only aggregate records whose ledger fields place them
+    on exactly one day and trace them to a SHA-256 and a source record ID.
+    """
+    return (
+        record.kind == "REAL"
+        and record.status in KEPT_STATUSES
+        and record.observation_start_utc is not None
+        and record.observation_end_utc is not None
+        and bool(record.sha256)
+        and bool(record.source_record_id)
+        and record.observation_end_utc == record.observation_start_utc + timedelta(days=1)
+    )
+
+
+def _registered_compatible(record: AcquisitionRecord, source_config: SourceConfig) -> bool:
+    """True when the record's product and version match the provider registry."""
+    return record.product == source_config.product and _product_version_compatible(
+        record.product_version, source_config.product_version
+    )
+
+
+def _chirps_daily_candidates(
+    manifest: AcquisitionManifest, record: AcquisitionRecord
+) -> dict[date, AcquisitionRecord]:
+    """Deterministic day -> kept REAL daily CHIRPS record map for the source.
+
+    Only acquisition-record fields participate: no filename or filesystem
+    metadata is ever trusted for a date, identity, version or availability
+    fact. A record whose observation window is not exactly the CHIRPS daily
+    cadence (one day) is not a candidate for aggregation, and neither is one
+    that cannot be traced (no SHA-256 or source record ID kept).
+
+    Same-day records with identical SHA-256 (the acquisition layer deduplicates
+    identical bytes to ``skipped_existing`` sharing one storage path) collapse
+    to a single deterministic choice (lowest record id). Same-day records with
+    different SHA-256 are a conflict that is never silently resolved: they
+    raise ``FeatureContractError`` naming the date and every record ID in
+    stable lexical order (approved decision C2).
+    """
+    day_map: dict[date, list[AcquisitionRecord]] = {}
+    for other in manifest.records:
+        if other.source != record.source or not _is_daily_candidate(other):
+            continue
+        day_map.setdefault(other.observation_start_utc.date(), []).append(other)
+    chosen: dict[date, AcquisitionRecord] = {}
+    for day in sorted(day_map):
+        same_day = sorted(day_map[day], key=lambda other: other.record_id)
+        distinct_shas = {other.sha256 for other in same_day}
+        if len(distinct_shas) == 1:
+            chosen[day] = same_day[0]
+            continue
+        raise FeatureContractError(
+            "conflicting CHIRPS daily artifacts for " + day.isoformat() + ": "
+            + ", ".join(other.record_id for other in same_day)
+            + " have different SHA-256 values; refusing to select among them"
+        )
+    return chosen
+
+
+def _chirps_rolling_window_days(
+    manifest: AcquisitionManifest,
+    record: AcquisitionRecord,
+    window_days: int,
+    source_config: SourceConfig,
+) -> tuple[list[date], list[AcquisitionRecord | None], set[str]]:
+    """The inclusive [D-(N-1), D] daily records ending on the anchor day D.
+
+    ``D`` is the anchor record's ``observation_start_utc.date()`` (approved
+    decision B). Returns (required dates ascending, record-or-None per required
+    date, resolved product versions among the present selected days). A ``None``
+    slot means the day is unavailable: its record is absent, or its
+    product/version is not compatible with the provider registry (approved
+    decision C3). Incompatibility is decided purely from ledger fields. Raises
+    ``FeatureContractError`` only when ambiguity must not be resolved silently
+    (conflicting same-day SHA, approved decision C2).
+
+    The anchor day is always present when the anchor record is itself a daily
+    candidate: same-day records with identical SHA-256 are interchangeable, so
+    the identity-verified anchor is used for its own day even when the
+    version-agnostic dedupe would otherwise pick an incompatible duplicate
+    (the "anchor day is always present by construction" guarantee). This never
+    fabricates a value: the anchor still passes the same identity, leakage and
+    availability gates as every other day.
+    """
+    candidates = _chirps_daily_candidates(manifest, record)
+    anchor = record.observation_start_utc.date()
+    anchor_is_candidate = _is_daily_candidate(record)
+    required = [
+        anchor - timedelta(days=offset)
+        for offset in range(window_days - 1, -1, -1)
+    ]
+    window: list[AcquisitionRecord | None] = []
+    versions: set[str] = set()
+    for day in required:
+        other = candidates.get(day)
+        if (
+            day == anchor
+            and anchor_is_candidate
+            and (other is None or not _registered_compatible(other, source_config))
+        ):
+            other = record
+        if other is None or not _registered_compatible(other, source_config):
+            window.append(None)
+            continue
+        window.append(other)
+        versions.add(other.product_version)
+    return required, window, versions
+
+
 def _build_chirps_features(
     record: AcquisitionRecord,
     request: FeatureExtractionRequest,
@@ -501,6 +626,8 @@ def _build_chirps_features(
     lons: np.ndarray,
     *,
     derived_at_utc: datetime,
+    chirps_decoder: Callable | None = None,
+    raw_root: Path | None = None,
 ) -> list[FeatureValue]:
     daily_value = sample_grid(
         raw,
@@ -510,7 +637,160 @@ def _build_chirps_features(
         request.position.longitude,
         sentinels=(CHIRPS_NODATA,),
     )
-    available = chirps_daily_coverage_days(manifest, record)
+    source_config = get_source_config(record.source)
+    day_samples: dict[tuple[date, str], float | None] = {}
+    window_results: dict[
+        int, tuple[FeatureStatus, float | None, str | None, list[FeatureDayProvenance] | None]
+    ] = {}
+
+    def sample_a_day(day_record: AcquisitionRecord) -> float | None:
+        key = (day_record.observation_start_utc.date(), day_record.record_id)
+        if key not in day_samples:
+            day_path = artifact_path(day_record, raw_root=raw_root)
+            day_raw, day_lats, day_lons = read_chirps_grid(
+                day_path, decoder=chirps_decoder, region=request.region
+            )
+            day_samples[key] = sample_grid(
+                day_raw,
+                day_lats,
+                day_lons,
+                request.position.latitude,
+                request.position.longitude,
+                sentinels=(CHIRPS_NODATA,),
+            )
+        return day_samples[key]
+
+    def day_rejection_note(day_record: AcquisitionRecord) -> str:
+        leakage = evaluate_leakage(
+            day_record.observation_start_utc,
+            day_record.observation_end_utc,
+            day_record.available_utc,
+            request.prediction_cutoff_utc,
+        )
+        if leakage is FeatureStatus.REJECTED_LEAKAGE:
+            return _leakage_rejected_note(day_record, request.prediction_cutoff_utc)
+        return _availability_policy_rejected_note(day_record, request.availability_policy)
+
+    def day_provenance_for(day_record: AcquisitionRecord) -> FeatureDayProvenance:
+        return FeatureDayProvenance(
+            observation_start_utc=day_record.observation_start_utc,
+            observation_end_utc=day_record.observation_end_utc,
+            available_utc=day_record.available_utc,
+            availability_classification=day_record.availability_classification,
+            acquisition_record_id=day_record.record_id,
+            source_record_id=day_record.source_record_id,
+            artifact_sha256=day_record.sha256,
+        )
+
+    def rolling_window_result(
+        window_days: int,
+    ) -> tuple[FeatureStatus, float | None, str | None, list[FeatureDayProvenance] | None]:
+        """One inclusive [D-(N-1), D] window: gates then coverage then pixels.
+
+        Raise-level failures (conflicting same-day SHA during selection, or a
+        selected artifact failing identity/checksum verification) abort before
+        any status is produced. Every evaluated day's audit entry is kept in
+        ``days`` even when the window is rejected or insufficient, so the
+        rejection stays traceable without ever leaking a partial value.
+        """
+        cached = window_results.get(window_days)
+        if cached is not None:
+            return cached
+        required, window, versions = _chirps_rolling_window_days(
+            manifest, record, window_days, source_config
+        )
+        present = [other for other in window if other is not None]
+        per_day = [day_provenance_for(other) for other in present]
+        if per_day and per_day[-1].observation_start_utc != record.observation_start_utc:
+            raise FeatureContractError(
+                f"CHIRPS rolling window for anchor {record.record_id} does not end on "
+                "the anchor day; refusing to name a provenance anchor the window "
+                "does not actually cover"
+            )
+        for other in present:
+            verify_artifact_identity(
+                other, artifact_path(other, raw_root=raw_root), source_config=source_config
+            )
+        rejected = [
+            other
+            for other in present
+            if evaluate_leakage(
+                other.observation_start_utc,
+                other.observation_end_utc,
+                other.available_utc,
+                request.prediction_cutoff_utc,
+            )
+            is FeatureStatus.REJECTED_LEAKAGE
+            or evaluate_availability_policy(
+                other, availability_policy=request.availability_policy
+            )
+            is FeatureStatus.REJECTED_LEAKAGE
+        ]
+        if rejected:
+            note = (
+                "rejected for leakage: required day(s) "
+                + ", ".join(
+                    sorted({r.observation_start_utc.date().isoformat() for r in rejected})
+                )
+                + " do not clear the "
+                + request.availability_policy
+                + " gate; "
+                + "; ".join(
+                    f"{r.observation_start_utc.date().isoformat()}: {day_rejection_note(r)}"
+                    for r in rejected
+                )
+            )
+            result = (FeatureStatus.REJECTED_LEAKAGE, None, note, per_day)
+            window_results[window_days] = result
+            return result
+        unavailable = [day for day, other in zip(required, window) if other is None]
+        if unavailable or len(versions) > 1:
+            day = (
+                record.observation_start_utc.date().isoformat()
+                if record.observation_start_utc
+                else "?"
+            )
+            note = (
+                f"requires additional temporal coverage: {window_days} contiguous daily "
+                f"artifacts ending {day}; {len(present)} available; "
+                "missing history is never zero-filled."
+            )
+            reasons = []
+            if unavailable:
+                reasons.append(
+                    "missing daily artifact(s) "
+                    + ", ".join(unavailable_day.isoformat() for unavailable_day in unavailable)
+                )
+            if len(versions) > 1:
+                reasons.append(
+                    "mixed product vintages ("
+                    + ", ".join(sorted(versions))
+                    + ") are not aggregated"
+                )
+            note += " " + "; ".join(reasons)
+            result = (FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE, None, note, per_day)
+            window_results[window_days] = result
+            return result
+        samples = [sample_a_day(other) for other in present]
+        nodata_days = [
+            other.observation_start_utc.date().isoformat()
+            for other, sample in zip(present, samples)
+            if sample is None
+        ]
+        if nodata_days:
+            note = (
+                "cell is CHIRPS nodata (-9999); never converted to zero. "
+                "nodata on required day(s): "
+                + ", ".join(sorted(nodata_days))
+            )
+            result = (FeatureStatus.MISSING, None, note, per_day)
+            window_results[window_days] = result
+            return result
+        total = sum(sample for sample in samples)
+        result = (FeatureStatus.VALID, total, None, per_day)
+        window_results[window_days] = result
+        return result
+
     features: list[FeatureValue] = []
     for name in request.requested_features:
         spec = FEATURE_SPECS[name]
@@ -553,29 +833,21 @@ def _build_chirps_features(
                 )
             continue
         if spec.kind is FeatureKind.ROLLING and spec.window_days is not None:
-            window = spec.window_days
-            if available >= window and window > 1:
-                raise FeatureContractError(
-                    f"{spec.name}: {window} daily files are kept, but multi-file rolling "
-                    "aggregation is not implemented in this single-artifact foundation; "
-                    "refusing to fabricate a value"
-                )
-            day = (
-                record.observation_start_utc.date().isoformat()
-                if record.observation_start_utc
-                else "?"
+            status, value, note, per_day = rolling_window_result(spec.window_days)
+            rolling_provenance = build_feature_provenance(
+                record,
+                prediction_cutoff_utc=request.prediction_cutoff_utc,
+                transform=spec.transform,
+                derived_at_utc=derived_at_utc,
+                days=per_day,
             )
             features.append(
                 _feature(
                     spec,
-                    provenance=provenance,
-                    value=None,
-                    status=FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE,
-                    note=(
-                        f"requires additional temporal coverage: {window} contiguous daily "
-                        f"artifacts ending {day}; {available} available; "
-                        "missing history is never zero-filled."
-                    ),
+                    provenance=rolling_provenance,
+                    value=value,
+                    status=status,
+                    note=note,
                 )
             )
             continue
@@ -1160,6 +1432,8 @@ def _read_source_features(
             lats,
             lons,
             derived_at_utc=derived_at_utc,
+            chirps_decoder=chirps_decoder,
+            raw_root=raw_root,
         )
     if request.source == "era5-land":
         grids = (

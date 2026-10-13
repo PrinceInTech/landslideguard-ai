@@ -14,8 +14,10 @@ router = APIRouter(tags=["analytics"])
 def analytics():
     try:
         return get_analytics()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analytics failed: {e}")
+    except Exception:
+        # Generic client message: the underlying error can include file paths
+        # or data-source details that must not leave the server.
+        raise HTTPException(status_code=500, detail="Analytics failed")
 
 
 @router.get("/api/weather/{location_name}")

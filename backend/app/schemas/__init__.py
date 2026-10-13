@@ -174,6 +174,7 @@ class PredictionResponse(BaseModel):
     recommended_actions: List[str]
     model: str
     data_source: str
+    prediction_mode: str = "demo"
 
 
 # ---------- Alerts ----------

@@ -2167,30 +2167,61 @@ Facts surfaced by the inspected CHC pages (general product/cadence statements;
 - Daily CHIRPS v2 is produced from pentad totals using CFSv2 daily downscaling
   ratios; "Preliminary daily CHIRPS2 uses the same CFSv2-based daily downscaling
   approach"; CHIRP2 daily downscaling uses IMERGv7 (daily README).
-- CHIRPS v3 cadence (v3-only): preliminary available 2 days after the end of a
-  pentad (2nd, 7th, 12th, 17th, 22nd, 27th of each month); final produced once a
-  month, typically the third week of the following month (v3 product page).
+- **CHIRPS v2 publication cadence (official v2 documentation).** The CHIRPS-2.0
+  README states: "Two CHIRPS products are produced operationally: a rapid
+  preliminary version, and a later final version. The preliminary CHIRPS product
+  is available, for the entire domain, two days after the end of a pentad (2nd,
+  7th, 12th, 17th, 22nd and 27th)… The final CHIRPS product … is complete
+  sometime in the third week of the following month. Final products for all
+  times/domains/formats are calculated at that time." The CHIRPS2 FAQ states the
+  same latency: rapid (GTS and Mexico only) "available 2 days after the end of a
+  pentad"; final (all station data) "available sometime in the third week of the
+  following month." This cadence is **explicitly documented for CHIRPS v2**
+  (README FOLDERS lists `prelim` = "Quasi-global Rapid CHIRPS with 2-day lag").
+  An earlier revision of this section treated the cadence as v3-only and
+  non-transferable to v2; that was **incorrect** and is superseded here.
+- **Preliminary vs final daily product paths (edition identification).** The two
+  streams are distinguished by documented directory tree, not filename: final
+  daily lives under `/products/CHIRPS-2.0/global_daily/…`; preliminary daily
+  under `/products/CHIRPS-2.0/prelim/global_daily/…`. The same filename pattern
+  (`chirps-v2.0.YYYY.MM.DD.tif.gz`) can appear in both trees, so the stored
+  retrieval URL — when preserved as evidence — supports path-based edition
+  identification.
+- Sources (official CHC/UCSB):
+  https://data.chc.ucsb.edu/products/CHIRPS-2.0/README-CHIRPS.txt ;
+  https://wiki.chc.ucsb.edu/CHIRPS2_FAQ .
 
 Implications for the exact artifact
 `chirps__v2.x__2026-08-31.tif.gz` (sha256 `44934651…`, 10,288,665 B; ledger
 `REAL-chirps-v2.0-2026-08-31`):
 
-- No inspected page states a per-file availability timestamp or an explicit
-  v2-daily final-vs-preliminary publication lag. The **v3 cadence does not
-  transfer** to the v2 artifact, and the daily README confirms the same
-  downscaling method for preliminary and (implied) final daily v2, so the
-  filename cannot disambiguate which stream the acquired file belongs to.
+- The official v2 cadence is **approximate and product-level**: it gives an
+  expected publication window ("sometime in the third week of the following
+  month") but not an exact day/time, not a guaranteed latest-availability
+  deadline, and not the first public availability time of an individual daily
+  file. It must **not** be treated as a precise per-file availability timestamp
+  or a guaranteed conservative upper bound.
+- The stored retrieval URL for the artifact points to the final tree
+  (`…/global_daily/…`, not `…/prelim/global_daily/…`), supporting path-based
+  identification of the edition as **final**; the filename alone would not
+  disambiguate which stream the acquired file belongs to.
 - The ledger value `available_utc = 2026-09-11T21:10:59Z` remains a bare literal:
   re-verified this phase — `availability_classification`,
   `availability_source`, `availability_derivation`, `request_url`, `final_url`,
   `response_headers` and `provider_metadata` are all `null` for the CHIRPS
   record, and no script or note derives the value (§7A, unchanged).
-- A reproducible conservative bound **cannot** be defined for this artifact from
-  the inspected official sources (no stated v2 cadence constant). Feasible
-  artifact-specific evidence, if it is ever needed, is external and future-dated:
-  an HTTP `Last-Modified` / dated `data.chc.ucsb.edu` directory listing for the
-  exact file name, CHC ERDDAP/catalog metadata, or an independent archive
-  (e.g. IRI/LDEO, climateSERV). None was captured at acquisition time.
+- A reproducible conservative bound **still cannot** be defined for this artifact
+  from the inspected official sources: the v2 cadence window is approximate and
+  does not guarantee a latest-availability deadline, so directory modification
+  times, gzip MTIME, retrieval timestamps and the monthly cadence do not
+  independently establish a provider-issued first-availability timestamp. Any
+  future derived rule requires a separate recorded decision with evidence
+  supporting a conservative bound; no cadence-derived rule and no safety margin
+  is adopted here. Feasible artifact-specific provider-issued evidence, if ever
+  needed, is external and future-dated: an HTTP `Last-Modified` / dated
+  `data.chc.ucsb.edu` directory listing for the exact file name, CHC
+  ERDDAP/catalog metadata, or an independent archive (e.g. IRI/LDEO,
+  climateSERV). None was captured at acquisition time.
 
 Verdict Q6: **unchanged — `EXTERNAL_EVIDENCE_REQUIRED`.** The inspected pages
 support the general product/cadence narrative but do not evidence this file's
@@ -2255,7 +2286,7 @@ provider-issued timestamp for this exact vintage.
 | 1 | CHIRPS v2: 35+ yr, 50°S–50°N, 1981 to near-present | `chirps` page | official product page | general; no per-file timestamps | supports inventory note, not Q6 |
 | 2 | CHIRPS v2 production ends after December 2026 (v3 transition) | `chirps` + `chirps3` pages | official product pages | general migration statement | supports §22/§23 note; not Q6 evidence |
 | 3 | Daily CHIRPS v2 from pentads via CFSv2 ratios; preliminary daily same approach; CHIRP2 uses IMERGv7 | daily README | official README | general; filename cannot separate preliminary vs final | not Q6 evidence |
-| 4 | CHIRPS v3 preliminary 2 days after pentad end; v3 final ~3rd week of following month | `chirps3` page | official product page | v3-specific; does not transfer to v2 artifact | not Q6 evidence |
+| 4 | CHIRPS preliminary/final publication cadence (preliminary ~2 days after pentad end; final ~3rd week of following month) is documented for **v2** | CHIRPS-2.0 README + CHIRPS2 FAQ | official v2 docs | approximate, product-level; does not establish per-file first availability or a guaranteed conservative upper bound | supports §25.3 narrative; not Q6 evidence |
 | 5 | v2 artifact `available_utc=2026-09-11T21:10:59Z` is provider-issued | none | — | no external evidence; all derivation fields `null` (§7A unchanged) | **Q6 `EXTERNAL_EVIDENCE_REQUIRED`** |
 | 6 | ERA5-Land consolidated 1950 to 2–3 months before present | KB page | official docs | general | supports inventory note; not Q7 evidence |
 | 7 | ERA5-Land-T NRT ~5 days behind real time; monthly means ~5 days after month end | KB page | official docs | general; NRT stream ≠ consolidated artifact | not Q7 evidence |
@@ -2276,8 +2307,10 @@ provider-issued timestamp for this exact vintage.
   provider-issued timestamp for either committed artifact is **not recoverable
   from repository records** — any future evidence requires a new external query,
   which would only reflect the file's state at that later time.
-- The v3 cadence facts (§25.3) describe CHIRPS v3 and must not be silently
-  re-piped into the v2 artifact.
+- The CHIRPS publication cadence (§25.3) is approximate and product-level: it is
+  documented for CHIRPS v2 (README, CHIRPS2 FAQ) but must not be silently
+  converted into a per-file provider-issued availability timestamp or a
+  guaranteed conservative upper bound for the v2 artifact.
 - The manifest's repeated ERA5 records (4 failed + 1 downloaded for the same
   `record_id`) document retry history; the committed artifact is the single
   downloaded netCDF, and no record, manifest field, or checksum was modified by
@@ -3577,3 +3610,314 @@ any decision on the captured header. Not authorized, not executed this phase.
   phase. Q6 production gate stays **CLOSED** (research/replay recovered); Q7
   remains `EXTERNAL_EVIDENCE_REQUIRED`; temporal production features remain
   `NEEDS_EVIDENCE`; overall production remains **NO-GO**.
+
+## 33. Phase 3.7.6H — Q6 CHIRPS availability evidence adjudication (2026-10-10)
+
+Adjudication-only phase: apply the pre-authorized acceptance criteria
+(§23.8, §28, §29.6, §29.7, §30) to the single authorized isolated
+retrieval-time capture reported by Phase 3.7.6G, and record the bounded Q6
+decision. No network call, no acquisition, no change to source code, manifest
+(records or ids), artifact bytes, schemas, contracts, or classification values;
+no commit, no push. §§19–32 are preserved byte-for-byte; only §33 is appended.
+
+### 33.1 Evidence under adjudication (reported run results)
+
+The values below are transcribed from the Phase 3.7.6G run report and are
+treated as **reported run results, not independently verified local files**.
+Because the scratch manifest that held the acquisition record was discarded
+after post-run verification, **the evidence record is not available for future
+reinspection in this repository** unless separately retained; this section does
+not claim the scratch record can still be retrieved.
+
+| Fact | Reported value |
+|---|---|
+| Request URL | `https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz` |
+| HTTP status | `200`; `redirect_chain` `None`; `final_url` == request URL |
+| `retrieved_utc` | `2026-10-10T04:47:17.083682Z` |
+| `acquired_utc` | `2026-10-10T04:47:28.072259Z` |
+| `last-modified` | `Fri, 11 Sep 2026 21:10:59 GMT` (= `2026-09-11T21:10:59Z`) |
+| `etag` | `"6aa46e63-9cfe19"` |
+| `content-length` | `10288665` |
+| `date` header | `Sat, 10 Oct 2026 04:47:19 GMT` |
+| Delivered bytes SHA-256 | `449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6` (= committed artifact) |
+| Outcome | `SKIPPED_EXISTING`; `storage_path` `chirps/chirps__v2.x__2026-08-31.tif.gz`; existing artifact not rewritten; scratch `raw_root` gained no files |
+| Capture record id | `REAL-chirps-v2.0-2026-08-31-evidence-20261010t044717.014650z` (scratch-only) |
+| `availability_classification` | `unknown`; `availability_source` `response_headers.last-modified` |
+| Post-run integrity (reported) | committed manifest and original artifact hashes unchanged; scratch tree discarded |
+
+### 33.2 Acceptance-criteria reading (§22.3, §23.8, §28, §29.6)
+
+Evidence classes involved in Q6 (distinguished per §22.3/§25):
+
+- **Provider/archive evidence**: CHC live directory listing of
+  `.../tifs/p05/2026/`, per-file mtime `2026-Sep-11 21:10` for the exact file,
+  fetched 2026-10-10 (§28.2 row 3). Corroborating, but a retrieval-time
+  observation; §28 treats it as corroborating provider metadata, **not** as a
+  capture at the original acquisition (§28.5).
+- **Artifact-embedded**: gzip MTIME raw `1789161059` = `2026-09-11T21:10:59Z`,
+  FLG 0x08 (FNAME), compressed size 10,288,665 B (§28.2 row 2) —
+  provider-produced production/compression metadata inside the immutable bytes
+  we hold.
+- **Retrieval-time HTTP headers**: `Last-Modified`/`ETag`/`Date`/`Content-Length`
+  captured during the 3.7.6G single GET (retrieval instant
+  `2026-10-10T04:47:17Z`).
+- **Retrieval/acquisition lifecycle**: `retrieved_utc`/`acquired_utc` of the
+  3.7.6G request — when *our* GET ran, not the original `2026-10-08`
+  acquisition.
+- **Engineering-derived bounds**: Q7 `available_utc 2026-09-15T00:00:00Z`
+  (vintage + 2 months, K=0, §25.4).
+
+What the matching `Last-Modified` **corroborates** (§29.6):
+
+1. The provider's served copy of this exact file carries the same stable mtime
+   as the historical directory listing and our artifact's gzip MTIME; the file
+   has not been re-touched since `2026-09-11T21:10:59Z`.
+2. The delivered bytes hash exactly to the committed artifact (the
+   `SKIPPED_EXISTING` dedupe requires this), so the provider currently serves
+   content byte-identical to our artifact.
+3. The evidence chain is internally consistent at every link:
+   **artifact bytes → gzip MTIME → provider directory listing → live
+   `Last-Modified`** (§29.6).
+
+What it does **not** establish (§23.8, §28.2 caveats, §29.6):
+
+1. It was captured at a new retrieval instant, not the original `2026-10-08`
+   acquisition; it does not prove the provider served/published that value on
+   the original retrieval date or on any specific earlier date.
+2. `Last-Modified` is a server-evidenced bound ("resource in this state **no
+   later than** its mtime", §23.8) — a modification-time property, **not** a
+   provider-declared publication time and **not** proof of the artifact's first
+   availability; it cannot backdate availability below the recovered value, and
+   a hypothetical re-upload that preserved the mtime would be
+   indistinguishable (§28.2 caveat).
+3. Per the pre-authorized criteria it is accepted only as **retrieval-time
+   server evidence**, never auto-labelled `provider_issued`; the record's
+   classification must stay `unknown` (§29.6).
+
+### 33.3 Bounded Q6 decision
+
+Applying §23.8/§29.6/§29.7 exactly (no new classification, no loosening):
+
+- **Research/replay** — stays **RECOVERED** (unchanged from §28; not newly
+  loaded by this phase).
+- **Historical availability** — **CORROBORATED**: the retrieval-time
+  `Last-Modified` equals the recovered `2026-09-11T21:10:59Z`, closing the
+  chain in §33.2. Corroboration strengthens confidence in the recovered value
+  but does not change its classification.
+- **Classification of the 3.7.6G record** — remains **`unknown`**:
+  `Last-Modified` is evidence, not a derivation (§29.6), and it is a
+  server-evidenced modification time, not proof of first availability.
+- **Production gate** — position: §29.7 holds Q6 production **CLOSED** until
+  "an authorized retrieval-time capture **and** a recorded production-gate
+  decision". The capture occurred, but on adjudication it yields retrieval-time
+  server evidence observed at a later instant — not a `provider_issued`
+  `available_utc` at the original acquisition — and the only evidence that
+  clears a production gate is `provider_issued` (§23.8). The recorded decision
+  (this section) therefore **keeps the gate CLOSED**; no production-gate change
+  is authorized this phase. A future reconsideration would additionally need
+  the evidence retained in-repo (the 3.7.6G record was discarded with its
+  scratch) and a fresh §28.6/§29.7 recorded decision; neither is authorized.
+
+### 33.4 Register posture after §33 (unchanged except as explicitly recorded)
+
+- **Q6 CHIRPS**: research/replay **recovered** (§28); historical availability
+  **corroborated** by retrieval-time server evidence (this section);
+  `provider_issued` **not** established; production gate **CLOSED** (recorded
+  decision: no production-gate change).
+- **Q7 ERA5-Land**: stays `EXTERNAL_EVIDENCE_REQUIRED`; unchanged.
+- Temporal production features (CHIRPS + ERA5-Land): stay `NEEDS_EVIDENCE`;
+  unchanged. Overall production stays **NO-GO**; unchanged.
+- No `provider_issued` claim, no manifest/artifact/contract/classification or
+  system change; nothing stored in-repo beyond this sub-section.
+- Scratch-only provenance: the underlying capture record is not retained
+  in-repo and cannot be re-inspected unless separately retained; §§33.1/33.2
+  are the retained transcription.
+
+### 33.5 Explicit non-claims
+
+- Not claiming the 3.7.6G scratch record is retrievable (it was discarded after
+  post-run verification; §33.1).
+- Not claiming `Last-Modified` proves the provider served/published the file on
+  `2026-09-11` or on the original `2026-10-08` retrieval date.
+- Not claiming `Last-Modified` proves first availability or constitutes a
+  `provider_issued` `available_utc`.
+- Not claiming any production-gate change, any code/manifest/artifact/
+  classification/contract change, or any independently verifiable in-repo
+  evidence beyond this transcribed appendix.
+
+### 33.6 Verification and scope
+
+- HEAD `7c5e262`; working tree: only `docs/historical-data-coverage.md` modified
+  (this §33 append); `git diff --check` clean.
+- Manifest SHA-256 `1f2b9434…d43`, contract `1.1.0`, 6 records, blob
+  `07dc2cdd…`; feature contract `1.0.0` (`backend/app/schemas/features.py:71`);
+  CHIRPS SHA-256 `44934651…d9a6` (10,288,665 B); ERA5-Land SHA-256
+  `af53a81a…4ac9` (127,970 B) — all unchanged.
+- Focused offline suite (`python -m pytest tests/test_acquisition_rig.py
+  tests/test_cds_acquisition.py -q -o addopts=""` from `backend/`): **142
+  passed**.
+- Secret scan: 117 files against 4 `.env` values, hits = 0.
+- Sections audit: §§28–33 each appear exactly once, in order; §§19–32 preserved
+  byte-for-byte.
+- No network call made in this phase; no commit, no push.
+
+### 33.7 Verdict
+
+Q6 historical availability is now **corroborated** by a matching retrieval-time
+`Last-Modified` (server-evidenced mtime identical to the recovered value), but
+the evidence does not rise to `provider_issued` and cannot prove the artifact's
+first availability; the Q6 **production gate therefore remains CLOSED by
+recorded decision**, while research/replay stays **recovered**. Q7 remains
+`EXTERNAL_EVIDENCE_REQUIRED`; temporal production features remain
+`NEEDS_EVIDENCE`; overall production remains **NO-GO**. Because the underlying
+record lived only in discarded scratch, this appendix is the retained
+transcription of the evidence and the recorded decision.
+
+## 34. Phase 3.7.8G — CHIRPS multi-day rolling aggregation: feature contract 1.1.0 documentation (2026-10-10)
+
+Documentation-only phase. It records the accepted Phase 3.7.8F implementation of
+multi-day CHIRPS precipitation rolling aggregation and the feature-contract
+version bump to `1.1.0`. No source code, test, schema, manifest, artifact,
+acquisition policy, or feature classification was changed this phase; no network
+call, no acquisition, no commit, no push. §§1–33 are preserved byte-for-byte;
+only §34 is appended. Where earlier sections (§§22–33) state the **feature**
+contract was `1.0.0`, that is a correct historical snapshot of those phases;
+this section records the current, changed value. The **acquisition manifest**
+contract remains `1.1.0` and is unrelated to this bump.
+
+### 34.1 Two contract versions (do not conflate)
+
+- **Acquisition manifest contract** — `contract_version` `1.1.0`, unchanged by
+  this phase (6 records; manifest SHA-256 `1f2b9434…d43`, blob `07dc2cdd…`).
+- **Feature-extraction contract** — `FEATURE_CONTRACT_VERSION` was `1.0.0`
+  through Phase 3.7.6H and is now **`1.1.0`**
+  (`backend/app/schemas/features.py`), bumped in Phase 3.7.8F because the change
+  is additive but observable in `FeatureExtractionResult.contract_version` and
+  in the provenance schema.
+
+### 34.2 Schema additions (`backend/app/schemas/features.py`)
+
+- `FEATURE_CONTRACT_VERSION = "1.1.0"`.
+- New `FeatureDayProvenance`: the per-day trace for one daily artifact
+  aggregated into a multi-day window. Fields: `observation_start_utc`,
+  `observation_end_utc`, `available_utc` (nullable),
+  `availability_classification` (nullable), `acquisition_record_id`,
+  `source_record_id`, and `artifact_sha256` (validated as a standard SHA-256 hex
+  digest). Datetimes must be timezone-aware, and `observation_end_utc` must not
+  precede `observation_start_utc`.
+- `FeatureProvenance` gains `days: list[FeatureDayProvenance] | None`
+  (default `None`). When present it must be strictly ascending by
+  `observation_start_utc`, and its **last** entry must equal the anchor's
+  `observation_start_utc`. Single-day features keep `days = None`, so
+  single-artifact results are unchanged.
+
+### 34.3 Rolling aggregation semantics (`backend/app/services/features.py`)
+
+- **Anchor day `D`** is the resolved record's `observation_start_utc.date()`.
+  The record is resolved as the most recently acquired kept REAL record for the
+  source (or one pinned by `artifact_sha256`), so the anchor day is always
+  present by construction.
+- **Inclusive window** `[D − (N − 1), D]`, where `N = window_days`. Supported
+  CHIRPS precipitation features: `precipitation_daily_mm` (direct) and rolling
+  `precipitation_1d_mm` (1), `precipitation_3d_mm` (3), `precipitation_7d_mm`
+  (7), `precipitation_14d_mm` (14), `precipitation_30d_mm` (30). The 1-day
+  window is handled on the single-day path and equals the anchor day's value.
+- **Summation in millimetres**: the value is the sum of each required day's
+  nearest-cell precipitation sample, in `mm`. No averaging, weighting,
+  interpolation, or spatial resampling.
+- **Double precision, unrounded**: samples are IEEE-754 float64 and are summed
+  without rounding, quantization, or clamping, so the stored value is the raw
+  floating-point total (for example `0.1 + 0.1 + 0.1 != 0.3`).
+
+### 34.4 Fail-closed behavior
+
+Status precedence within a window is
+**raise > rejected > insufficient > missing > valid**:
+
+- **Conflicting same-day hashes → raise.** Two kept records for the same day
+  with different SHA-256 raise `FeatureContractError` naming the date and every
+  candidate `record_id` in stable lexical order; the ambiguity is never
+  silently resolved. Identical same-day SHA-256 values dedupe deterministically
+  to one day (lowest `record_id`).
+- **Rejected required day → whole window rejected.** If any required present day
+  fails the leakage rule or the request's availability policy, the entire window
+  is `REJECTED_LEAKAGE` with a null value. A rejected day invalidates every
+  window whose inclusive range contains it (for example a rejected interior day
+  rejects both the 3-day and 7-day windows, while the daily value is unaffected).
+- **Missing day / incompatible product-version → insufficient.** A required day
+  with no kept daily record, or whose product/version is not compatible with the
+  provider registry, yields `INSUFFICIENT_TEMPORAL_COVERAGE`, a null value, and
+  an explanatory note. Missing history is never zero-filled.
+- **Mixed vintages → insufficient.** Two or more distinct compatible
+  `product_version` values within one window fail closed as
+  `INSUFFICIENT_TEMPORAL_COVERAGE` ("mixed product vintages … are not
+  aggregated"), never averaged or concatenated.
+- **Nodata → missing.** If any required day's sampled cell is CHIRPS nodata
+  (`-9999`), the window is `MISSING` with a null value; a nodata cell is never
+  converted to zero.
+
+No partial sum is ever emitted: the total is computed only after every required
+day is present, single-vintage, and non-nodata. Each selected day's
+product/version and recomputed SHA-256 are verified before any pixel decoding or
+sampling begins.
+
+### 34.5 Per-day provenance vs anchor-day provenance
+
+- For a multi-day window, `FeatureProvenance.days` lists one
+  `FeatureDayProvenance` per selected (present) day, in ascending date order;
+  absent days have no entry and are instead named in the feature note.
+- The singular `FeatureProvenance` fields continue to describe the **anchor
+  (last) day**: `artifact_sha256`, `acquisition_record_id`, `source_record_id`,
+  and `observation_start_utc` all equal the last `days` entry. A multi-day
+  window is therefore never traced through the singular hash alone.
+- For single-day and 1-day features, `days = None` and the singular fields
+  describe that single artifact (unchanged from before 1.1.0).
+
+### 34.6 Implementation/test coverage ≠ real-world evidence
+
+- The behavior above is verified by **synthetic fixture grids** and in-memory
+  manifests in `backend/tests/test_feature_contract.py` (18 added test
+  functions / 25 collected cases: 3/7/14/30-day sums, unrounded float64, nodata
+  and missing positions, same-SHA dedupe, conflicting-SHA error,
+  order-independent determinism under a shuffled manifest, incompatible and
+  mixed versions, production vs research availability gates, rejected-day
+  propagation, SHA-before-decode, per-day provenance, and anchor
+  short-circuit), plus the full backend suite (**370 passed**).
+- **Only one real CHIRPS daily artifact exists** in the repository
+  (`data/raw/real/chirps/chirps__v2.x__2026-08-31.tif.gz`, SHA-256
+  `44934651…d9a6`, 10,288,665 B). Real, end-to-end **multi-day** validation has
+  therefore **not** been demonstrated; the single real-artifact production-path
+  test asserts that the 7-day request is `INSUFFICIENT_TEMPORAL_COVERAGE` for
+  exactly this reason.
+- Test success is engineering verification only. It is not provider evidence,
+  not a real-world accuracy claim, and not production approval.
+
+### 34.7 Preserved evidence posture (unchanged by this phase)
+
+- **Q6 CHIRPS**: research/replay **recovered**; historical availability
+  **corroborated** by retrieval-time `Last-Modified`; `provider_issued` **not**
+  established; production gate **CLOSED** by recorded decision (§33).
+- **Q7 ERA5-Land**: remains `EXTERNAL_EVIDENCE_REQUIRED`.
+- Temporal production features (CHIRPS and ERA5-Land): remain `NEEDS_EVIDENCE`.
+- Overall production: remains **NO-GO**.
+
+This phase claims **no** `provider_issued` availability and **no** production
+readiness; either would require new, separately authorized evidence.
+
+### 34.8 Verification for this phase
+
+- HEAD `7c5e262f42c7a1bfe1a27cc47c73f79d29b8d02a`, branch `main`.
+- Before this phase the working tree held the four code/test modifications plus
+  the §33 docs baseline; this phase additionally edits only
+  `docs/historical-data-coverage.md` (appends §34).
+- `git diff --check`: clean. §§1–33 preserved; §34 appended. No code, test,
+  schema, manifest, artifact, or policy change.
+
+### 34.9 Explicit non-claims
+
+- Not claiming real multi-day CHIRPS validation (only one real daily artifact is
+  available).
+- Not claiming `provider_issued` availability or any production-gate change.
+- Not claiming model training, accuracy, or deployment readiness.
+- Not modifying the historical `1.0.0` feature-contract statements in §§22–33,
+  which remain accurate for the phases they record.

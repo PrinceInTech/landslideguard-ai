@@ -111,14 +111,17 @@ Naive datetimes are rejected outright; nothing is silently converted.
 | missing spatial pixel | `value=None`, status `missing` | never interpolated from neighbours |
 | missing temporal coverage | `value=None`, status `insufficient_temporal_coverage` | never zero-filled |
 | leakage violation | `value=None`, status `rejected_leakage` | never partially applied |
-| unverifiable artifact (SHA-256 mismatch) | extraction aborted (`invalid_source_artifact` path) | never extracted from |
+| unverifiable artifact (SHA-256 mismatch) | extraction aborted (`FeatureContractError`; no feature produced) | never extracted from |
 
 A **measured `0.0` is valid data** (a dry day is not nodata) and is returned
 as `0.0` with status `valid`. Every non-valid feature carries a `note`
 explaining why.
 
-Statuses: `valid`, `missing`, `insufficient_temporal_coverage`,
-`rejected_leakage`, `invalid_source_artifact`.
+Statuses carried by an emitted `FeatureValue`: `valid`, `missing`,
+`insufficient_temporal_coverage`, `rejected_leakage`. (`FeatureStatus` also
+reserves `invalid_source_artifact` for artifact-identity failure, but the current
+pipeline aborts with `FeatureContractError` before any feature is produced, so no
+result is returned with that status today.)
 
 ## Provenance propagation
 
@@ -182,8 +185,10 @@ introduced.
 **Decode order is identity-before-leakage.** `run_extraction` resolves the
 ledger record, re-verifies product/version compatibility and the artifact
 SHA-256, and only then maps feature names, applies the leakage gate, decodes,
-and samples. A tampered or mismatched artifact aborts with
-`invalid_source_artifact` before any leakage decision is exposed.
+and samples. A tampered or mismatched artifact aborts the extraction with
+`FeatureContractError` before any leakage decision is exposed (the
+`FeatureStatus.invalid_source_artifact` member is reserved but not currently
+emitted, because the failure raises rather than returning a feature).
 
 **CHIRPS reader.** `read_chirps_grid(path, *, region=None)` parses the header,
 verifies the full contracted geometry (rejecting BigTIFF, wrong dimensions,

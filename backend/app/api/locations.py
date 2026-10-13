@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.auth import get_current_user
 from app.database.session import get_db
 from app.models import Alert, EnvironmentalData, Location, Prediction
 from app.schemas import LocationCreate, LocationOut, LocationUpdate
@@ -58,7 +59,11 @@ def get_location(location_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/locations", response_model=LocationOut)
-def create_location(payload: LocationCreate, db: Session = Depends(get_db)):
+def create_location(
+    payload: LocationCreate,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     loc = Location(**payload.model_dump())
     db.add(loc)
     db.commit()
@@ -70,7 +75,12 @@ def create_location(payload: LocationCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/locations/{location_id}", response_model=LocationOut)
-def update_location(location_id: int, payload: LocationUpdate, db: Session = Depends(get_db)):
+def update_location(
+    location_id: int,
+    payload: LocationUpdate,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     loc = db.query(Location).filter(Location.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found")
@@ -85,7 +95,11 @@ def update_location(location_id: int, payload: LocationUpdate, db: Session = Dep
 
 
 @router.delete("/locations/{location_id}", status_code=204)
-def delete_location(location_id: int, db: Session = Depends(get_db)):
+def delete_location(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     loc = db.query(Location).filter(Location.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found")

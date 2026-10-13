@@ -40,7 +40,7 @@ const NAV_GROUPS = [
       { to: '/locations', label: 'Locations', icon: MapPin },
       // Admin-only: hidden from viewers, who would only get 403 from the API.
       { to: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
-      { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
     ],
   },
 ]

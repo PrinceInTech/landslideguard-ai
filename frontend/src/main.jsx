@@ -15,3 +15,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </React.StrictMode>
 )
+
+// Register the app-shell service worker in production only. In development it
+// is never registered so a stale cache can never shadow HMR. A failed
+// registration is non-fatal: the app simply runs without offline shell caching.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.warn('Service worker registration failed; continuing without it.', error)
+    })
+  })
+}

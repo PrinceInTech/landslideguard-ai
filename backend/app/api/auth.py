@@ -10,8 +10,9 @@ from app.services.auth_service import (
     create_access_token,
     decode_token,
     hash_password,
-    verify_password,
+    verify_password_or_dummy,
 )
+from app.services.rate_limit import login_rate_limit, register_rate_limit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -39,7 +40,11 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
 
 
 @router.post("/register", response_model=Token)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
+def register(
+    payload: UserCreate,
+    db: Session = Depends(get_db),
+    _rate: object = Depends(register_rate_limit),
+):
     """Self-service signup.
 
     New accounts are always created with the least-privileged `viewer` role.
@@ -64,9 +69,18 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(
+    payload: UserLogin,
+    db: Session = Depends(get_db),
+    _rate: object = Depends(login_rate_limit),
+):
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    # Whether or not the email exists, password verification runs and the same
+    # generic 401 is returned. When the account is absent (or its stored hash is
+    # empty) the check runs against a fixed dummy hash, so the bcrypt work -- and
+    # therefore the response time -- does not reveal whether the account exists.
+    stored_hash = user.password_hash if user is not None else None
+    if not verify_password_or_dummy(payload.password, stored_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user.id, user.role)
     return Token(access_token=token, user=UserOut.model_validate(user))

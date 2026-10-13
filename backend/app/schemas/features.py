@@ -5,8 +5,9 @@ contract for converting the currently acquired REAL artifacts (CHIRPS daily
 precipitation, ERA5-Land hourly 2m_temperature / total_precipitation /
 volumetric_soil_water_layer_1 / surface_runoff) into ML-ready features.
 Phase 3.7.2 adds the verified geometry constants that the real-artifact
-readers must check before they interpret any pixel; the contract version
-stays 1.0.0 (all additions are additive).
+readers must check before they interpret any pixel; Phase 3.7.8 adds the
+approved multi-day CHIRPS rolling aggregation with per-day source
+provenance. Both changes were additive; the contract version is 1.1.0.
 
 Nothing here is wired into the DEMO prediction path, the ML model, any API
 route, or the UI. No model is trained and no real-world accuracy is claimed.
@@ -68,7 +69,7 @@ from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_val
 from app.schemas.provenance import _validate_standard_checksum
 
 #: Version of this feature-extraction contract.
-FEATURE_CONTRACT_VERSION = "1.0.0"
+FEATURE_CONTRACT_VERSION = "1.1.0"
 
 #: Canonical CRS of the study region and every supported REAL source.
 CANONICAL_CRS = "EPSG:4326 (WGS84)"
@@ -93,7 +94,7 @@ CHIRPS_ROLLING_WINDOW_DAYS = (3, 7, 14, 30)
 COORDINATE_PRECISION_BY_SOURCE = {"chirps": 0.025, "era5-land": 0.05}
 
 # ---------------------------------------------------------------------------
-# Verified artifact geometry (Phase 3.7.2, additive; contract stays 1.0.0).
+# Verified artifact geometry (Phase 3.7.2, additive; contract version 1.1.0).
 # These values were read from the acquired artifacts themselves (GeoTIFF
 # ModelPixelScale/tiepoint/GeoKeys, NetCDF axes). A reader must refuse any
 # file whose header deviates from these values BEFORE interpreting a pixel.
@@ -349,6 +350,36 @@ def supported_features(source: str | None = None) -> list[str]:
     return [spec.name for spec in FEATURE_SPECS.values() if source is None or spec.source == source]
 
 
+class FeatureDayProvenance(BaseModel):
+    """One daily source artifact aggregated into a multi-day rolling feature.
+
+    Carries, per required day, the acquisition record identity (acquisition
+    and source record IDs), the artifact SHA-256, the observation window and
+    its availability evidence -- so a multi-day window stays auditable to the
+    per-day record that supplied it. Every datetime is timezone-aware; naive
+    inputs are rejected.
+    """
+
+    observation_start_utc: AwareDatetime
+    observation_end_utc: AwareDatetime
+    available_utc: AwareDatetime | None = None
+    availability_classification: AvailabilityClassification | None = None
+    acquisition_record_id: str = Field(min_length=1, max_length=300)
+    source_record_id: str = Field(min_length=1, max_length=200)
+    artifact_sha256: str = Field(min_length=64, max_length=64)
+
+    @field_validator("artifact_sha256")
+    @classmethod
+    def _sha256(cls, v: str) -> str:
+        return _validate_standard_checksum(v, "sha256")
+
+    @model_validator(mode="after")
+    def _window_order(self) -> "FeatureDayProvenance":
+        if self.observation_end_utc < self.observation_start_utc:
+            raise ValueError("observation_end_utc must not be before observation_start_utc")
+        return self
+
+
 class FeatureProvenance(BaseModel):
     """Full traceability of one extracted feature to its source artifact.
 
@@ -356,6 +387,11 @@ class FeatureProvenance(BaseModel):
     ``product_version``, ``source_record_id``, artifact SHA-256 and the four
     UTC instants) plus the exact derivation performed by this contract.
     Every datetime is timezone-aware; naive inputs are rejected.
+
+    A multi-day rolling feature carries an ordered ``days`` list in addition
+    to the anchor fields; the singular fields always name the anchor (last)
+    day's record, and no multi-day window is ever traced through the singular
+    ``artifact_sha256``.
     """
 
     source: str = Field(min_length=1, max_length=200)
@@ -381,6 +417,12 @@ class FeatureProvenance(BaseModel):
     license_attribution: str = Field(min_length=1, max_length=500)
     transform: str = Field(min_length=1, max_length=500)
     derived_at_utc: AwareDatetime
+    days: list[FeatureDayProvenance] | None = Field(
+        default=None,
+        description="Ascending per-day source provenance when this feature aggregates "
+        "more than one daily artifact (multi-day CHIRPS rolling windows); None for "
+        "single-day features so single-artifact results stay backward compatible.",
+    )
 
     @field_validator("artifact_sha256")
     @classmethod
@@ -391,6 +433,21 @@ class FeatureProvenance(BaseModel):
     def _window_order(self) -> "FeatureProvenance":
         if self.observation_end_utc < self.observation_start_utc:
             raise ValueError("observation_end_utc must not be before observation_start_utc")
+        return self
+
+    @model_validator(mode="after")
+    def _days_ascending(self) -> "FeatureProvenance":
+        if not self.days:
+            return self
+        for earlier, later in zip(self.days, self.days[1:]):
+            if later.observation_start_utc <= earlier.observation_start_utc:
+                raise ValueError(
+                    "per-day provenance must be strictly ascending by observation_start_utc"
+                )
+        if self.days[-1].observation_start_utc != self.observation_start_utc:
+            raise ValueError(
+                "the anchor observation_start_utc must match the last per-day entry"
+            )
         return self
 
 

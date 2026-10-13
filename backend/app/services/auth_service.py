@@ -52,6 +52,30 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+# A bcrypt hash of an arbitrary, non-secret placeholder, produced once at import
+# with the same parameters as real hashes (default cost). It exists solely to
+# spend a comparable amount of work when an account is absent (or its stored hash
+# is empty), so a failed login's duration does not reveal whether the email is
+# registered. It is never a credential, never stored on a user row, and never
+# logged.
+_DUMMY_PASSWORD = "landslideguard-nonexistent-account-placeholder"
+_DUMMY_PASSWORD_HASH = hash_password(_DUMMY_PASSWORD)
+
+
+def verify_password_or_dummy(plain: str, hashed: str | None) -> bool:
+    """Verify ``plain`` while keeping bcrypt work independent of the account.
+
+    When ``hashed`` is missing (unknown account or empty/legacy stored hash) the
+    comparison still runs -- against ``_DUMMY_PASSWORD_HASH`` -- so the bcrypt
+    cost is incurred, and the function always returns ``False``. This is a timing
+    *mitigation*, not a mathematically constant-time guarantee.
+    """
+    if not hashed:
+        verify_password(plain, _DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(plain, hashed)
+
+
 def create_access_token(user_id: int, role: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES

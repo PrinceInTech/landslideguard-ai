@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.auth import get_current_user
 from app.database.session import get_db
 from app.models import Alert, Location, utcnow
 from app.schemas import AlertCreate, AlertOut, AlertUpdate
@@ -36,7 +37,11 @@ def list_alerts(
 
 
 @router.post("")
-def create_alert(payload: AlertCreate, db: Session = Depends(get_db)):
+def create_alert(
+    payload: AlertCreate,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     loc = db.query(Location).filter(Location.id == payload.location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found")
@@ -57,7 +62,12 @@ def create_alert(payload: AlertCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/{alert_id}")
-def update_alert(alert_id: int, payload: AlertUpdate, db: Session = Depends(get_db)):
+def update_alert(
+    alert_id: int,
+    payload: AlertUpdate,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")

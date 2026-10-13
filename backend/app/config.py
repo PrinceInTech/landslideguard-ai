@@ -64,16 +64,22 @@ def _upload_limit_bytes() -> int:
     return megabytes * 1024 * 1024
 
 # A hardcoded fallback signing key means anybody who reads the repo can forge
-# admin tokens. Outside development we require an explicitly configured secret.
+# admin tokens. The demo secret and the default admin password are tolerated
+# only in an *explicitly local* environment; every other name -- production,
+# staging, or a misspelled/unrecognised value -- must supply real credentials.
+# This keeps a typo in ENVIRONMENT from silently downgrading a deployment to the
+# demo secrets.
 _INSECURE_JWT_SECRET = "change-me-landslideguard-demo-secret"
-_ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
-_IS_PRODUCTION = _ENVIRONMENT in ("production", "prod")
+_ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+_LOCAL_ENVIRONMENTS = ("development", "dev", "local", "test")
+_IS_LOCAL = _ENVIRONMENT in _LOCAL_ENVIRONMENTS
 _JWT_SECRET_RAW = os.getenv("JWT_SECRET", _INSECURE_JWT_SECRET)
 
-if _IS_PRODUCTION and _JWT_SECRET_RAW == _INSECURE_JWT_SECRET:
+if not _IS_LOCAL and _JWT_SECRET_RAW == _INSECURE_JWT_SECRET:
     raise RuntimeError(
-        "JWT_SECRET must be set to a unique value when ENVIRONMENT=production. "
-        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        "JWT_SECRET must be set to a unique value outside local development "
+        f"(ENVIRONMENT={_ENVIRONMENT!r}). Generate one with: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
     )
 if len(_JWT_SECRET_RAW) < 16:
     raise RuntimeError("JWT_SECRET must be at least 16 characters long.")
@@ -83,7 +89,6 @@ class Settings:
     APP_NAME = "LandslideGuard AI"
     APP_VERSION = "1.0.0"
     ENVIRONMENT = _ENVIRONMENT
-    DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
     # Security
     JWT_SECRET = _JWT_SECRET_RAW
@@ -94,9 +99,10 @@ class Settings:
     DEMO_ADMIN_EMAIL = os.getenv("DEMO_ADMIN_EMAIL", "admin@landslideguard.ai")
     DEMO_ADMIN_PASSWORD = os.getenv("DEMO_ADMIN_PASSWORD", "admin123")
 
-    if _IS_PRODUCTION and DEMO_ADMIN_PASSWORD == "admin123":
+    if not _IS_LOCAL and DEMO_ADMIN_PASSWORD == "admin123":
         raise RuntimeError(
-            "DEMO_ADMIN_PASSWORD must be changed from the default when ENVIRONMENT=production."
+            "DEMO_ADMIN_PASSWORD must be changed from the default outside local "
+            f"development (ENVIRONMENT={_ENVIRONMENT!r})."
         )
 
     # Database. SQLite is the only engine actually supported: no other driver

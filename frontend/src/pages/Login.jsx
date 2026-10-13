@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Mountain, LogIn } from 'lucide-react'
 import api, { setToken } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
 
 const DEMO_CREDENTIALS = { email: 'admin@landslideguard.ai', password: 'admin123' }
 
@@ -12,6 +13,7 @@ export default function Login() {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const { setSession } = useAuth()
+  const { isOnline } = useOnlineStatus()
   const navigate = useNavigate()
 
   const submit = async (e) => {
@@ -53,9 +55,14 @@ export default function Login() {
           {error && (
             <p className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</p>
           )}
-          <button type="submit" disabled={busy} className="btn-primary w-full justify-center !py-2.5">
+          <button type="submit" disabled={busy || !isOnline} className="btn-primary w-full justify-center !py-2.5">
             {busy ? 'Signing in…' : (<><LogIn className="h-4 w-4" /> Sign In</>)}
           </button>
+          {!isOnline && (
+            <p className="text-center text-[11px] text-amber-400">
+              You are offline — sign-in needs a backend connection.
+            </p>
+          )}
           <p className="text-center text-[11px] text-slate-500">
             Demo: admin@landslideguard.ai / admin123
           </p>

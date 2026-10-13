@@ -1,0 +1,14 @@
+# Protected files pinned to their reviewed git blob content.
+# Format: <sha1 of "blob <size>\0<content>"> <path>
+# CI recomputes each with `git hash-object` and fails on any mismatch.
+#
+# A pin is intentional content, not a "do not touch" rule: update a line ONLY in
+# the same commit as a reviewed change to that file. Because these five files
+# currently hold pending (uncommitted) Phase 3.8 content, a CI run against an
+# earlier commit will report a mismatch until this change set is committed
+# together with this pin -- that is the intended fail-closed behaviour.
+31c895fdafbba8952cb3d6584d6304ddde56c7e3 backend/app/schemas/features.py
+1d77eac06ab244bfb11cbb69980d320c3e0372a5 backend/app/services/features.py
+5499891eba523dcf14996b39dc066beb1fbc77e8 backend/tests/test_feature_contract.py
+d5b846e9bec6c258580765944af32fd8afc6fc6d backend/tests/test_feature_real_artifacts.py
+034eb57c8d7e868631d729bcb551e0a84fa2442e docs/historical-data-coverage.md

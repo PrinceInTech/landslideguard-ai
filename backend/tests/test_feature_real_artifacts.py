@@ -530,7 +530,7 @@ def test_run_extraction_real_chirps_preserves_provenance():
         ),
         manifest=_manifest(record),
     )
-    assert result.contract_version == "1.0.0"
+    assert result.contract_version == "1.1.0"
     assert result.source == "chirps"
     assert result.artifact_sha256 == CHIRPS_SHA
     assert result.storage_path == "chirps/chirps__v2.x__2026-08-31.tif.gz"
@@ -699,3 +699,126 @@ def test_demo_artifacts_still_verify_untouched():
     from app.services.provenance import verify_artifact_checksums
 
     assert verify_artifact_checksums() == []
+
+
+@CHIRPS_MISSING
+def test_run_extraction_real_chirps_production_path():
+    """Synthetic test-fixture data only.
+
+    The ``provider_issued`` classification on the in-memory record is fabricated
+    for this pipeline-compatibility test and is NOT evidence of real provider
+    availability. ``available_utc`` is the committed ledger value (required by
+    the production gate to be non-null) and is likewise not a new acquisition.
+    The committed manifest and artifact bytes are never written; identity is
+    verified against the pinned SHA-256 before any gate runs.
+    """
+    record = _chirps_record(availability_classification="provider_issued")
+    before = {path: sha256_of(path) for path in (REAL_CHIRPS, REAL_ERA5)}
+    assert before[REAL_CHIRPS] == CHIRPS_SHA
+    assert before[REAL_ERA5] == ERA5_SHA
+    result = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.02, longitude=90.03),
+            policy="production",
+            sha=CHIRPS_SHA,
+            features=["precipitation_daily_mm", "precipitation_1d_mm", "precipitation_7d_mm"],
+        ),
+        manifest=_manifest(record),
+    )
+    assert result.contract_version == "1.1.0"
+    assert result.artifact_sha256 == CHIRPS_SHA
+    assert result.storage_path == "chirps/chirps__v2.x__2026-08-31.tif.gz"
+    by_name = {feature.feature_name: feature for feature in result.features}
+    for feature in result.features:
+        assert feature.status is not FeatureStatus.REJECTED_LEAKAGE
+        assert feature.provenance.availability_classification == "provider_issued"
+        assert feature.provenance.artifact_sha256 == CHIRPS_SHA
+        assert feature.provenance.prediction_cutoff_utc == VALID_CUTOFF
+    daily = by_name["precipitation_daily_mm"]
+    one_day = by_name["precipitation_1d_mm"]
+    seven = by_name["precipitation_7d_mm"]
+    assert daily.status is FeatureStatus.VALID
+    assert daily.value == pytest.approx(CHIRPS_REFERENCE[(28.02, 90.03)], rel=1e-12)
+    assert one_day.status is FeatureStatus.VALID and one_day.value == daily.value
+    assert seven.status is FeatureStatus.INSUFFICIENT_TEMPORAL_COVERAGE
+    assert seven.value is None
+    after = {path: sha256_of(path) for path in (REAL_CHIRPS, REAL_ERA5)}
+    assert after == before
+    blocked = run_extraction(
+        _request(
+            "chirps",
+            Position(latitude=28.02, longitude=90.03),
+            policy="production",
+            sha=CHIRPS_SHA,
+            features=["precipitation_daily_mm"],
+        ),
+        manifest=_manifest(_chirps_record()),
+    )
+    assert all(
+        feature.status is FeatureStatus.REJECTED_LEAKAGE for feature in blocked.features
+    )
+
+
+@ERA5_MISSING
+def test_run_extraction_real_era5_production_path():
+    """Synthetic test-fixture data only.
+
+    Same constraints as the CHIRPS production-path test: the in-memory
+    ``provider_issued`` classification never leaves this test, the committed
+    artifact bytes and ledger are untouched, and the ``available_utc`` is the
+    committed ledger value required by the production gate, not evidence.
+    """
+    pytest.importorskip("netCDF4")
+    record = _era5_record(availability_classification="provider_issued")
+    before = {path: sha256_of(path) for path in (REAL_CHIRPS, REAL_ERA5)}
+    assert before[REAL_CHIRPS] == CHIRPS_SHA
+    assert before[REAL_ERA5] == ERA5_SHA
+    result = run_extraction(
+        _request(
+            "era5-land",
+            Position(latitude=26.0, longitude=94.0),
+            policy="production",
+            sha=ERA5_SHA,
+            features=[
+                "temperature_2m_K",
+                "precipitation_hourly_m",
+                "soil_water_layer1_m3m3",
+                "surface_runoff_m",
+            ],
+        ),
+        manifest=_manifest(record),
+    )
+    expected = {
+        "temperature_2m_K": (ERA5_REFERENCE["t2m"], "K"),
+        "precipitation_hourly_m": (ERA5_REFERENCE["tp"], "m"),
+        "soil_water_layer1_m3m3": (ERA5_REFERENCE["swvl1"], "m3/m3"),
+        "surface_runoff_m": (ERA5_REFERENCE["sro"], "m"),
+    }
+    assert result.contract_version == "1.1.0"
+    assert result.artifact_sha256 == ERA5_SHA
+    assert len(result.features) == 4
+    for feature in result.features:
+        assert feature.status is not FeatureStatus.REJECTED_LEAKAGE
+        value, unit = expected[feature.feature_name]
+        assert feature.status is FeatureStatus.VALID
+        assert feature.value == pytest.approx(value, rel=1e-12)
+        assert feature.unit == unit
+        assert feature.provenance.availability_classification == "provider_issued"
+        assert feature.provenance.artifact_sha256 == ERA5_SHA
+        assert feature.provenance.prediction_cutoff_utc == VALID_CUTOFF
+    after = {path: sha256_of(path) for path in (REAL_CHIRPS, REAL_ERA5)}
+    assert after == before
+    blocked = run_extraction(
+        _request(
+            "era5-land",
+            Position(latitude=26.0, longitude=94.0),
+            policy="production",
+            sha=ERA5_SHA,
+            features=["temperature_2m_K"],
+        ),
+        manifest=_manifest(_era5_record()),
+    )
+    assert all(
+        feature.status is FeatureStatus.REJECTED_LEAKAGE for feature in blocked.features
+    )
