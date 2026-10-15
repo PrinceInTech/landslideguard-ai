@@ -451,10 +451,19 @@ route walkthrough):
 | Admin | `/admin` | [`docs/screenshots/admin.png`](docs/screenshots/admin.png) |
 | Settings | `/settings` | [`docs/screenshots/settings.png`](docs/screenshots/settings.png) |
 
-The `login.png` capture shows the login form with the password field cleared and
-the plaintext demo-credential hint hidden — the demo credentials are **not**
-visible in that image. Make sure these files are committed before relying on any
-submission-generated link. The suggested page set and exact routes originate in
+The `login.png` capture shows the login form with the password field cleared
+and the plaintext demo-credential hint hidden (the demo email remains prefilled).
+It was re-captured on 2026-10-15 from a **production build preview** and verified
+programmatically; it is byte-identical to the previously reviewed image, so the
+recorded human review still applies and no separate human inspection of the
+re-capture was performed. The linked
+[`docs/screenshots/visual-review-log.md`](docs/screenshots/visual-review-log.md)
+currently records 11 screenshots as `REVIEWED` and 0 as `NOT REVIEWED`; these are
+human-recorded review statuses and do not independently establish visual QA
+verification. Overall screenshot visual QA remains `NOT VERIFIED`, and any row
+still marked `NOT REVIEWED` must be treated as unreviewed. Make sure these files
+are committed before relying on any submission-generated link. The suggested
+page set and exact routes originate in
 **[docs/demo.md → Screenshot checklist](docs/demo.md#5-screenshot-checklist)**.
 
 ## Deployment

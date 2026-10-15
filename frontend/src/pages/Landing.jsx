@@ -37,7 +37,7 @@ const HOW_IT_WORKS = [
   {
     icon: MapIcon,
     title: '4. GIS Visualization',
-    desc: 'Every location is rendered on an interactive map of Northeast India with live risk markers and environmental conditions.',
+    desc: 'Every location is rendered on an interactive map of Northeast India with risk markers and environmental conditions.',
   },
 ]
 
@@ -115,8 +115,13 @@ export default function Landing() {
       <section className="relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(245,158,11,0.12),transparent_55%)]" />
         <div className="mx-auto max-w-7xl px-5 pb-20 pt-20 text-center lg:pt-28">
-          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-xs font-bold text-amber-400">
-            <Radar className="h-3.5 w-3.5" /> Smart India Hackathon Project
+          <div className="mb-5 flex flex-wrap items-center justify-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-xs font-bold text-amber-400">
+              <Radar className="h-3.5 w-3.5" /> Smart India Hackathon Project
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-600/50 bg-slate-800/70 px-4 py-1.5 text-xs font-bold text-slate-300">
+              <Database className="h-3.5 w-3.5" /> DEMO DATA
+            </div>
           </div>
           <h1 className="mx-auto max-w-4xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             AI-Powered Landslide{' '}
@@ -125,8 +130,9 @@ export default function Landing() {
             </span>
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
-            Predict. Monitor. Warn. Protect. Real-time landslide risk monitoring for the North
-            Eastern Region of India using machine learning and GIS.
+            Predict. Monitor. Warn. Protect. Landslide risk monitoring for the North Eastern
+            Region of India using machine learning and GIS — running on demo data until live feeds
+            are connected.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link to="/dashboard" className="btn-primary !px-6 !py-3 text-base">
@@ -141,7 +147,7 @@ export default function Landing() {
               ['8', 'NER States Covered'],
               ['30', 'Monitoring Locations'],
               ['0–100', 'AI Risk Score Range'],
-              ['24×7', 'Continuous Monitoring'],
+              ['Per-request', 'Risk Refresh'],
             ].map(([v, l]) => (
               <div key={l} className="rounded-xl border border-slate-800 bg-surface p-4">
                 <p className="text-2xl font-extrabold text-brand">{v}</p>
@@ -178,8 +184,8 @@ export default function Landing() {
             </h2>
             <p className="mt-4 text-slate-400">
               An end-to-end AI platform that ingests environmental data, predicts landslide risk with
-              explainable machine learning, plots risk live on a GIS map of the NER, and issues
-              graded early warnings automatically.
+              explainable machine learning, plots risk on a GIS map of the NER, and issues
+              graded early warnings when risk levels escalate.
             </p>
             <ul className="mt-5 space-y-2 text-sm text-slate-300">
               <li>• Real ML model — not a mock-up — with honest accuracy reporting</li>

@@ -116,5 +116,8 @@ jobs:
       - name: Install (clean, from lockfile)
         run: npm ci
 
+      - name: Run frontend tests
+        run: npm test
+
       - name: Build
         run: npm run build

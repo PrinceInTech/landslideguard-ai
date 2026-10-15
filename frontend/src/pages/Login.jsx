@@ -9,12 +9,15 @@ const DEMO_CREDENTIALS = { email: 'admin@landslideguard.ai', password: 'admin123
 
 export default function Login() {
   const [email, setEmail] = useState(DEMO_CREDENTIALS.email)
-  const [password, setPassword] = useState(DEMO_CREDENTIALS.password)
+  const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const { setSession } = useAuth()
   const { isOnline } = useOnlineStatus()
   const navigate = useNavigate()
+  // The demo-credential hint is a local convenience only; it is never rendered
+  // in a production build (Vite inlines `DEV` at build time).
+  const showDemoHint = import.meta.env.DEV
 
   const submit = async (e) => {
     e.preventDefault()
@@ -63,9 +66,11 @@ export default function Login() {
               You are offline — sign-in needs a backend connection.
             </p>
           )}
-          <p className="text-center text-[11px] text-slate-500">
-            Demo: admin@landslideguard.ai / admin123
-          </p>
+          {showDemoHint && (
+            <p className="text-center text-[11px] text-slate-500">
+              Demo: admin@landslideguard.ai / admin123
+            </p>
+          )}
         </form>
 
         <p className="mt-6 text-center text-sm">

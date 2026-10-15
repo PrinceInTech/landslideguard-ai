@@ -104,9 +104,12 @@ password: admin123
 ```
 
 Seeded on an empty database by the startup seed, bcrypt-hashed, JWT-authenticated.
-These defaults are published in the repo and prefilled on the login form purely
-for local/judge demos; they **must** be overridden before any non-local
-deployment (see [README → Demo Credentials](../README.md#demo-credentials)).
+These defaults are published in the repo for local/judge demos. On the login
+form the email is prefilled, the password is left empty, and the plaintext
+demo-credential hint is rendered **only in Vite development mode**
+(`import.meta.env.DEV`) — it is absent from production builds. They **must** be
+overridden before any non-local deployment (see
+[README → Demo Credentials](../README.md#demo-credentials)).
 
 ## 4. Route-by-route walkthrough
 
@@ -122,7 +125,9 @@ stack, and CTAs. Buttons link into the app (which then requires sign-in).
 > problem number/title/ministry and any external statistics independently.
 
 ### `/login` — Login
-Prefilled demo credentials, a sign-in button, and an offline notice. Login is
+Email prefilled, password left empty, a sign-in button, and an offline notice.
+The demo-credential hint below the form is shown only in Vite development mode
+(`import.meta.env.DEV`) and is not present in production builds. Login is
 disabled while the browser is offline (sign-in needs the backend).
 
 ### `/dashboard` — Disaster Monitoring Dashboard
