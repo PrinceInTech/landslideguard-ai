@@ -220,10 +220,11 @@ def test_model_artifacts_exist():
     assert MODEL_FILE.stat().st_size > 0
 
 
-def test_model_loads_and_predicts(client):
+def test_model_loads_and_predicts(client, admin_headers):
     """The shipped artifact must load in this environment."""
     resp = client.post(
         "/api/predict",
+        headers=admin_headers,
         json={
             "rainfall": 150,
             "soil_moisture": 80,

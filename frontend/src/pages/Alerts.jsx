@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react'
 import { Bell, CheckCheck, CircleCheck, Search, Filter } from 'lucide-react'
 import api from '../services/api'
 import RiskBadge from '../components/RiskBadge'
+import AlertLifecycle from '../components/AlertLifecycle'
 import { PageState } from '../components/States'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { formatTs, NER_STATES } from '../utils/risk'
 
 const LEVELS = ['', 'LOW', 'MODERATE', 'HIGH', 'CRITICAL']
@@ -20,6 +22,7 @@ export default function Alerts() {
   const [status, setStatus] = useState('')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState(null)
+  const { isOnline } = useOnlineStatus()
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
@@ -61,6 +64,8 @@ export default function Alerts() {
     critical: alerts.filter((a) => a.risk_level === 'CRITICAL').length,
   }
 
+  const hasActiveFilters = Boolean(state || level || status || search)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -93,28 +98,28 @@ export default function Alerts() {
       {/* Filters */}
       <div className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <label className="label">Search Location</label>
+          <label className="label" htmlFor="alerts-search">Search Location</label>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
-            <input className="input !pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. Yuksom" />
+            <input id="alerts-search" className="input !pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. Yuksom" />
           </div>
         </div>
         <div>
-          <label className="label">State</label>
-          <select className="input" value={state} onChange={(e) => setState(e.target.value)}>
+          <label className="label" htmlFor="alerts-state">State</label>
+          <select id="alerts-state" className="input" value={state} onChange={(e) => setState(e.target.value)}>
             <option value="">All states</option>
             {NER_STATES.map((s) => <option key={s}>{s}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Risk Level</label>
-          <select className="input" value={level} onChange={(e) => setLevel(e.target.value)}>
+          <label className="label" htmlFor="alerts-level">Risk Level</label>
+          <select id="alerts-level" className="input" value={level} onChange={(e) => setLevel(e.target.value)}>
             {LEVELS.map((l) => <option key={l} value={l}>{l || 'All levels'}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Status</label>
-          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label className="label" htmlFor="alerts-status">Status</label>
+          <select id="alerts-status" className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s || 'All statuses'}</option>)}
           </select>
         </div>
@@ -124,7 +129,11 @@ export default function Alerts() {
         {alerts.length === 0 ? (
           <div className="card flex flex-col items-center gap-3 py-16 text-slate-500">
             <Bell className="h-10 w-10" />
-            <p className="text-sm">No alerts match the current filters.</p>
+            <p className="text-sm">
+              {hasActiveFilters
+                ? 'No alerts match the current filters.'
+                : 'No alerts have been issued yet.'}
+            </p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -151,32 +160,43 @@ export default function Alerts() {
                       <span>{formatTs(a.created_at)}</span>
                     </div>
                     {expanded === a.id && (
-                      <div className="mt-3 rounded-lg border border-slate-700 bg-surface-light p-3">
-                        <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Trigger Factors</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(a.trigger_factors || []).map((f, i) => (
-                            <span key={i} className="rounded-md bg-slate-800 px-2 py-1 text-[11px] text-slate-300">{f}</span>
-                          ))}
+                      <div className="mt-3 space-y-3 rounded-lg border border-slate-700 bg-surface-light p-3">
+                        <AlertLifecycle
+                          status={a.status}
+                          createdAt={a.created_at}
+                          resolvedAt={a.resolved_at}
+                        />
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Trigger Factors</p>
+                          {(a.trigger_factors || []).length ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {(a.trigger_factors || []).map((f, i) => (
+                                <span key={i} className="rounded-md bg-slate-800 px-2 py-1 text-[11px] text-slate-300">{f}</span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-500">No trigger factors recorded.</p>
+                          )}
                         </div>
-                        {a.resolved_at && (
-                          <p className="mt-2 text-[11px] text-slate-500">Resolved: {formatTs(a.resolved_at)}</p>
-                        )}
                       </div>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    {(a.status === 'active' || a.status === 'acknowledged') && (
-                      <button className="btn-outline !py-1.5 text-xs" onClick={() => setExpanded(expanded === a.id ? null : a.id)}>
-                        View Details
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="btn-outline !py-1.5 text-xs"
+                      aria-expanded={expanded === a.id}
+                      onClick={() => setExpanded(expanded === a.id ? null : a.id)}
+                    >
+                      {expanded === a.id ? 'Hide Details' : 'View Details'}
+                    </button>
                     {a.status === 'active' && (
-                      <button className="btn-outline !py-1.5 text-xs !text-sky-300" onClick={() => updateStatus(a.id, 'acknowledged')}>
+                      <button disabled={!isOnline} title={isOnline ? undefined : 'Needs a backend connection'} className="btn-outline !py-1.5 text-xs !text-sky-300" onClick={() => updateStatus(a.id, 'acknowledged')}>
                         <CheckCheck className="h-3.5 w-3.5" /> Acknowledge
                       </button>
                     )}
                     {a.status !== 'resolved' && (
-                      <button className="btn-outline !py-1.5 text-xs !text-emerald-300" onClick={() => updateStatus(a.id, 'resolved')}>
+                      <button disabled={!isOnline} title={isOnline ? undefined : 'Needs a backend connection'} className="btn-outline !py-1.5 text-xs !text-emerald-300" onClick={() => updateStatus(a.id, 'resolved')}>
                         <CircleCheck className="h-3.5 w-3.5" /> Resolve
                       </button>
                     )}

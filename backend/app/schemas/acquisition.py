@@ -16,11 +16,24 @@ duplicated beyond what a single event needs.
 """
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
+from app.redaction import (
+    MAX_PROVIDER_METADATA_KEYS,
+    MAX_PROVIDER_METADATA_KEY_LENGTH,
+    bound_string,
+    is_sensitive_key,
+    redact_text,
+    strip_control_chars,
+)
 from app.schemas.provenance import GeographicCoverage, _validate_standard_checksum
+
+#: The only response headers that may ever be persisted in the ledger. Matched
+#: case-insensitively and canonicalised to lower-case keys; anything else
+#: (Set-Cookie, Authorization, ...) is dropped before it can leak a secret.
+ALLOWLISTED_RESPONSE_HEADERS: tuple[str, ...] = ("last-modified", "etag", "date", "content-length")
 
 
 class AcquisitionStatus(str, Enum):
@@ -129,12 +142,92 @@ class AcquisitionRecord(BaseModel):
     known_limitations: list[str] = Field(default_factory=list)
     error: str | None = None
 
+    # -- Acquisition evidence capture (Phase 3.7.3B.3; additive, all optional) --
+    # Captured at acquisition time so a third party can, from the ledger alone,
+    # see how a record's HTTP evidence looked and why ``available_utc`` has its
+    # value (or that it is unknown). Never a substitute for provider semantics.
+    request_url: str | None = Field(
+        default=None,
+        description="Requested URL with userinfo and signed-query secrets redacted.",
+    )
+    request_method: str | None = Field(default=None, description="HTTP method, e.g. GET.")
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    response_headers: dict[str, str] | None = Field(
+        default=None,
+        description="Allowlisted final-response headers only (last-modified/etag/date).",
+    )
+    final_url: str | None = Field(
+        default=None,
+        description="Post-redirect URL (redacted); describes the final resource.",
+    )
+    redirect_chain: list[str] | None = Field(
+        default=None, description="Ordered redirect-hop URLs (redacted)."
+    )
+    provider_metadata: dict[str, str] | None = Field(
+        default=None, description="Source-specific version/catalog facts (never secrets)."
+    )
+    availability_classification: Literal["provider_issued", "derived", "unknown"] | None = Field(
+        default=None,
+        description="Explicit nature of the available_utc evidence; never auto-derived.",
+    )
+    availability_source: str | None = Field(
+        default=None,
+        description="Evidence reference (header/metadata field) or rule name.",
+    )
+    availability_derivation: str | None = Field(
+        default=None, description="Human-readable formula when the value is derived."
+    )
+    redacted_params: list[str] | None = Field(
+        default=None,
+        description="Names of query/retrieval parameters redacted before persisting.",
+    )
+
     @field_validator("sha256")
     @classmethod
     def _validate_sha256(cls, v):
         if v is None:
             return v
         return _validate_standard_checksum(v, "sha256")
+
+    @field_validator("response_headers", mode="before")
+    @classmethod
+    def _filter_response_headers(cls, v):
+        """Defence in depth: keep only allowlisted headers, bounded and clean.
+
+        Keys are lower-cased; values have control characters stripped and are
+        truncated to a hard bound so a hostile server cannot bloat the ledger.
+        """
+        if v is None or not isinstance(v, dict):
+            return v
+        filtered = {
+            str(key).lower(): bound_string(value)
+            for key, value in v.items()
+            if str(key).lower() in ALLOWLISTED_RESPONSE_HEADERS
+        }
+        return filtered or None
+
+    @field_validator("provider_metadata", mode="before")
+    @classmethod
+    def _sanitize_provider_metadata(cls, v):
+        """Defence in depth: bound and de-secret free-form provider metadata.
+
+        Drops credential-like keys, caps the number of keys, bounds key/value
+        lengths, strips control characters and redacts any URL/secret embedded
+        in a value. Never trust caller/provider input here.
+        """
+        if v is None or not isinstance(v, dict):
+            return v
+        sanitized: dict[str, str] = {}
+        for key, value in v.items():
+            if len(sanitized) >= MAX_PROVIDER_METADATA_KEYS:
+                break
+            key_str = strip_control_chars(str(key))[:MAX_PROVIDER_METADATA_KEY_LENGTH]
+            if not key_str or is_sensitive_key(key_str):
+                continue
+            value_str = bound_string(value)
+            value_str, _names = redact_text(value_str)
+            sanitized[key_str] = value_str or ""
+        return sanitized or None
 
     @model_validator(mode="after")
     def _state_is_coherent(self) -> "AcquisitionRecord":

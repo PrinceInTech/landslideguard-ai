@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import admin, alerts, analytics, auth, locations, prediction
+from app.api import admin, alerts, analytics, auth, features, locations, prediction, provenance_gate
 from app.config import settings
 from app.database.session import init_db, SessionLocal
 from app.services.location_service import refresh_risks, seed_locations
@@ -32,7 +32,9 @@ async def lifespan(app: FastAPI):
             f"ML model {'loaded' if model is not None else 'MISSING (rule-based fallback active)'}"
         )
     except Exception as e:
-        print(f"[startup] warning: {e}")
+        # Log only the exception class: the message can embed a DB URL or a
+        # filesystem path, and this line runs on every boot.
+        print(f"[startup] warning: {type(e).__name__}")
     finally:
         db.close()
     yield
@@ -57,6 +59,8 @@ app.include_router(auth.router)
 app.include_router(locations.router)
 app.include_router(prediction.router)
 app.include_router(alerts.router)
+app.include_router(features.router)
+app.include_router(provenance_gate.router)
 app.include_router(analytics.router)
 app.include_router(admin.router)
 
@@ -85,8 +89,10 @@ def health():
             db.execute(text("SELECT 1"))
         finally:
             db.close()
-    except Exception as e:
-        db_status = f"degraded: {e}"
+    except Exception:
+        # Never echo the driver error: it can contain the connection URL (with
+        # credentials) or a filesystem path. The server logs nothing sensitive.
+        db_status = "degraded"
 
     model, _bundle = predictor.get_model()
     model_status = "ok" if model is not None else "missing"

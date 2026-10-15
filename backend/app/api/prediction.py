@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.auth import get_current_user
 from app.database.session import get_db
 from app.ml import predictor
 from app.models import Location, Prediction
@@ -13,7 +14,11 @@ router = APIRouter(prefix="/api", tags=["prediction"])
 
 
 @router.post("/predict", response_model=PredictionResponse)
-def predict(payload: PredictionRequest, db: Session = Depends(get_db)):
+def predict(
+    payload: PredictionRequest,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     features = payload.model_dump()
     result = predictor.predict(features)
 
@@ -54,7 +59,11 @@ def list_predictions(db: Session = Depends(get_db)):
 
 
 @router.post("/predict/location/{location_id}")
-def predict_location(location_id: int, db: Session = Depends(get_db)):
+def predict_location(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _user: object = Depends(get_current_user),
+):
     loc = db.query(Location).filter(Location.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found")
@@ -74,4 +83,4 @@ def predict_location(location_id: int, db: Session = Depends(get_db)):
         "slope": loc.slope,
         "historical_occurrence": 1 if (loc.slope >= 32 or loc.elevation >= 1500) else 0,
     }
-    return predict(PredictionRequest(**features), db)
+    return predict(PredictionRequest(**features), db, _user)

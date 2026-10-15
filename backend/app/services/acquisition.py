@@ -26,13 +26,23 @@ import json
 import os
 import re
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import requests
 
 from app.config import settings
+from app.redaction import (
+    MAX_HEADER_VALUE_LENGTH,
+    bound_string,
+    is_sensitive_key,
+    redact_text,
+    redact_url,
+    strip_control_chars,
+)
 from app.schemas.acquisition import (
+    ALLOWLISTED_RESPONSE_HEADERS,
     AcquisitionManifest,
     AcquisitionRecord,
     AcquisitionStatus,
@@ -42,6 +52,7 @@ from app.schemas.acquisition import (
 )
 from app.schemas.acquisition import utcnow_aware
 from app.schemas.provenance import GeographicCoverage
+from app.services import cds as cds_client
 
 #: Constants for the approved REAL-data sources (verified in Phase 2.3). This
 #: flat list is the single source of truth the rig and tests both reference.
@@ -311,13 +322,38 @@ def resolve_credentials(source: SourceConfig) -> dict[str, str]:
 # Transport
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class FetchResult:
+    """Outcome of one real HTTP fetch, including evidence capture.
+
+    ``headers`` are the raw final-response headers (message casing preserved);
+    only the allowlist is ever persisted. ``final_url`` and ``redirect_chain``
+    are raw here and must be redacted before they reach the ledger.
+    """
+
+    content: bytes
+    status_code: int
+    headers: dict[str, str]
+    final_url: str
+    redirect_chain: tuple[str, ...] = ()
+
+
 class AcquisitionTransport:
     """Real network transport for acquisitions (injectable; mocked in tests)."""
 
-    def get_bytes(self, url: str, headers: dict | None = None, timeout: int = 120) -> bytes:
+    def fetch(self, url: str, headers: dict | None = None, timeout: int = 120) -> FetchResult:
         response = requests.get(url, headers=headers or {}, timeout=timeout)
         response.raise_for_status()
-        return response.content
+        return FetchResult(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            final_url=response.url,
+            redirect_chain=tuple(hop.url for hop in response.history),
+        )
+
+    def get_bytes(self, url: str, headers: dict | None = None, timeout: int = 120) -> bytes:
+        return self.fetch(url, headers, timeout).content
 
     def get_json(self, url: str, headers: dict | None = None, timeout: int = 60) -> object:
         response = requests.get(url, headers=headers or {}, timeout=timeout)
@@ -360,10 +396,85 @@ def _atomic_write(target: Path, data: bytes) -> None:
         raise
 
 
-def _sanitize_retrieval_params(params: dict) -> dict:
-    """Drop anything that smells like a secret so the ledger never persists one."""
-    sensitive = ("token", "password", "secret", "api_key", "apikey", "auth")
-    return {key: value for key, value in params.items() if not any(s in key.lower() for s in sensitive)}
+def _redact_chain(chain) -> tuple[list[str], list[str]]:
+    """Redact every URL in a redirect chain; return (redacted_hops, names)."""
+    redacted: list[str] = []
+    names: list[str] = []
+    for hop in chain or ():
+        value, hop_names = redact_url(hop)
+        redacted.append(value)
+        names.extend(hop_names)
+    return redacted, names
+
+
+def _allowlisted_headers(headers: dict | None) -> dict[str, str] | None:
+    """Keep only allowlisted response headers, canonicalised and bounded.
+
+    Values have control characters stripped and are truncated to
+    :data:`MAX_HEADER_VALUE_LENGTH`, so a hostile server cannot bloat the
+    ledger through an allowlisted header.
+    """
+    if not headers:
+        return None
+    filtered = {
+        str(key).lower(): bound_string(value)
+        for key, value in headers.items()
+        if str(key).lower() in ALLOWLISTED_RESPONSE_HEADERS
+    }
+    return filtered or None
+
+
+#: Maximum nesting depth walked while sanitising a retrieval-params snapshot.
+_MAX_PARAM_DEPTH = 25
+
+
+def _sanitize_retrieval_params(params: dict) -> tuple[dict, list[str]]:
+    """Recursively drop secret-like keys and redact URL-embedded secrets.
+
+    Walks nested dicts/lists/sets (bounded depth) so a secret hidden inside a
+    nested request body cannot survive into the ledger. Returns the safe
+    snapshot plus the names of everything redacted, so redaction is auditable
+    from the ledger alone.
+    """
+    redacted_names: list[str] = []
+
+    def scrub(obj, depth: int):
+        if depth > _MAX_PARAM_DEPTH:
+            return "<truncated>"
+        if isinstance(obj, dict):
+            out: dict = {}
+            for key, value in obj.items():
+                key_str = str(key)
+                if is_sensitive_key(key_str):
+                    redacted_names.append(key_str)
+                    continue
+                if key_str in ("url", "export_url") and isinstance(value, str):
+                    redacted_value, url_names = redact_url(value)
+                    redacted_names.extend(url_names)
+                    out[key] = redacted_value
+                else:
+                    out[key] = scrub(value, depth + 1)
+            return out
+        if isinstance(obj, (list, tuple, set)):
+            return [scrub(item, depth + 1) for item in obj]
+        if isinstance(obj, str):
+            return strip_control_chars(obj)
+        return obj
+
+    sanitized = scrub(dict(params), 0)
+    return sanitized, sorted(set(redacted_names))
+
+
+def _sanitize_error(exc: BaseException) -> str:
+    """Render an exception without leaking URL/userinfo/query secrets.
+
+    ``requests`` embeds the full URL in ``HTTPError``/``ConnectionError``/
+    ``InvalidURL`` messages; the rendered string is passed through
+    :func:`redact_text` before it can reach the ledger or a raised error.
+    """
+    raw = f"{type(exc).__name__}: {exc}"
+    sanitized, _names = redact_text(raw)
+    return sanitized or type(exc).__name__
 
 
 def _extract_download_url(source: SourceConfig, params: dict) -> str:
@@ -417,7 +528,9 @@ def save_acquisition_manifest(manifest: AcquisitionManifest, path: Path | None =
     fd, tmp_name = tempfile.mkstemp(prefix=f"{target.name}.", suffix=".part", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(manifest.model_dump_json(indent=2) + "\n")
+            # exclude_none: additive evidence fields stay absent on legacy/new
+            # records rather than emitting a wall of nulls. Loads back identically.
+            fh.write(manifest.model_dump_json(indent=2, exclude_none=True) + "\n")
         os.replace(tmp_name, target)
     except BaseException:
         try:
@@ -464,8 +577,21 @@ def _make_record(
     observation_start_utc: datetime | None = None,
     observation_end_utc: datetime | None = None,
     available_utc: datetime | None = None,
+    request_url: str | None = None,
+    request_method: str | None = None,
+    http_status: int | None = None,
+    response_headers: dict | None = None,
+    final_url: str | None = None,
+    redirect_chain: list | None = None,
+    provider_metadata: dict | None = None,
+    availability_classification: str | None = None,
+    availability_source: str | None = None,
+    availability_derivation: str | None = None,
+    redacted_params: list[str] | None = None,
 ) -> AcquisitionRecord:
     version = product_version or source.product_version
+    params_snapshot, param_redactions = _sanitize_retrieval_params(dict(params))
+    combined_redactions = sorted(set((redacted_params or []) + param_redactions)) or None
     return AcquisitionRecord(
         record_id=f"{source.kind}-{source.name}-{_slug(version)}-{_slug(acquisition_key)}",
         source=source.name,
@@ -475,7 +601,7 @@ def _make_record(
         status=status,
         access_reference=source.access_reference,
         source_record_id=source_record_id,
-        retrieval_params=_sanitize_retrieval_params(dict(params)),
+        retrieval_params=params_snapshot,
         retrieved_utc=retrieved_utc,
         acquired_utc=utcnow_aware(),
         observation_start_utc=observation_start_utc,
@@ -489,6 +615,17 @@ def _make_record(
         storage_path=storage_path,
         known_limitations=list(source.known_limitations),
         error=error,
+        request_url=request_url,
+        request_method=request_method,
+        http_status=http_status,
+        response_headers=response_headers,
+        final_url=final_url,
+        redirect_chain=redirect_chain,
+        provider_metadata=provider_metadata,
+        availability_classification=availability_classification,
+        availability_source=availability_source,
+        availability_derivation=availability_derivation,
+        redacted_params=combined_redactions,
     )
 
 
@@ -641,8 +778,17 @@ class AcquisitionDriver:
         observation_start_utc: datetime | None = None,
         observation_end_utc: datetime | None = None,
         available_utc: datetime | None = None,
+        availability_classification: str | None = "unknown",
+        availability_source: str | None = None,
+        availability_derivation: str | None = None,
+        provider_metadata: dict | None = None,
     ) -> AcquisitionRecord:
         """Fetch one artifact into immutable storage and record it in the ledger.
+
+        HTTP evidence (request URL/method, final status, allowlisted headers and
+        redirect chain) is captured for every attempt. ``availability_*`` are
+        caller/rule-supplied and never auto-derived from headers, so a captured
+        ``Last-Modified`` is evidence, not a claim of provider publication time.
 
         Raises
         ------
@@ -664,6 +810,7 @@ class AcquisitionDriver:
                 "retrieval_params['bbox'] (never download the global inventory by default)"
             )
         url = _extract_download_url(source, params)
+        request_url, request_redactions = redact_url(url)
 
         acquisition_key = acquisition_key or utcnow_aware().strftime("%Y%m%dT%H%M%SZ")
         extension = _download_extension(params)
@@ -679,11 +826,12 @@ class AcquisitionDriver:
         manifest = load_acquisition_manifest(self.manifest_path)
         retrieved_utc = utcnow_aware()
 
-        # 3. Fetch.
+        # 3. Fetch (capturing evidence; a failed attempt is recorded honestly).
         try:
-            data = self.transport.get_bytes(url, headers={}, timeout=120)
+            result = self.transport.fetch(url, headers={}, timeout=120)
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            response = getattr(exc, "response", None)
+            error = _sanitize_error(exc)
             record = _make_record(
                 source,
                 acquisition_key=acquisition_key,
@@ -696,9 +844,44 @@ class AcquisitionDriver:
                 observation_start_utc=observation_start_utc,
                 observation_end_utc=observation_end_utc,
                 available_utc=available_utc,
+                request_url=request_url,
+                request_method="GET",
+                http_status=getattr(response, "status_code", None),
+                response_headers=(
+                    _allowlisted_headers(dict(getattr(response, "headers", {}) or {}))
+                    if response is not None
+                    else None
+                ),
+                provider_metadata=provider_metadata,
+                availability_classification="unknown",
+                availability_source=availability_source,
+                availability_derivation=availability_derivation,
+                redacted_params=request_redactions,
             )
             _persist_record(manifest, record, self.manifest_path)
             raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # Evidence captured from the final response (headers/status describe the
+        # final resource after any redirect).
+        data = result.content
+        final_url, final_redactions = redact_url(result.final_url)
+        redirect_chain, chain_redactions = _redact_chain(result.redirect_chain)
+        combined_redactions = sorted(
+            set(request_redactions + final_redactions + chain_redactions)
+        ) or None
+        evidence = dict(
+            request_url=request_url,
+            request_method="GET",
+            http_status=result.status_code,
+            response_headers=_allowlisted_headers(result.headers),
+            final_url=final_url,
+            redirect_chain=redirect_chain or None,
+            provider_metadata=provider_metadata,
+            availability_classification=availability_classification,
+            availability_source=availability_source,
+            availability_derivation=availability_derivation,
+            redacted_params=combined_redactions,
+        )
 
         # 4. Checksum.
         actual_sha256 = hashlib.sha256(data).hexdigest()
@@ -717,6 +900,7 @@ class AcquisitionDriver:
                 observation_start_utc=observation_start_utc,
                 observation_end_utc=observation_end_utc,
                 available_utc=available_utc,
+                **evidence,
             )
             _persist_record(manifest, record, self.manifest_path)
             raise ChecksumMismatchError(f"{source.name}: {error}")
@@ -746,6 +930,7 @@ class AcquisitionDriver:
                 observation_start_utc=observation_start_utc,
                 observation_end_utc=observation_end_utc,
                 available_utc=available_utc,
+                **evidence,
             )
             _persist_record(manifest, record, self.manifest_path)
             return record
@@ -766,6 +951,242 @@ class AcquisitionDriver:
             observation_start_utc=observation_start_utc,
             observation_end_utc=observation_end_utc,
             available_utc=available_utc,
+            **evidence,
+        )
+        _persist_record(manifest, record, self.manifest_path)
+        return record
+
+    # -- CDS acquisition -----------------------------------------------------
+    def acquire_cds(
+        self,
+        *,
+        dataset: str,
+        inputs: dict,
+        acquisition_key: str | None = None,
+        source_record_id: str | None = None,
+        observation_start_utc: datetime | None = None,
+        observation_end_utc: datetime | None = None,
+        available_utc: datetime | None = None,
+        expected_sha256: str | None = None,
+        cds: cds_client.CdsTransport | None = None,
+    ) -> AcquisitionRecord:
+        """Acquire one artifact through the CDS async job flow into the ledger.
+
+        Mirrors :meth:`acquire` (credential gate, immutable storage, SHA-256
+        dedupe, honest failure records) but drives the real CDS two-phase API:
+        submit execution -> poll -> download the result reference. The access
+        token is read through :func:`resolve_credentials` and kept in memory
+        only; the request snapshot stored in the ledger never contains it.
+
+        Raises the same contract exceptions as :meth:`acquire`; a failed job or
+        timed-out submission is recorded as ``failed`` before raising
+        :class:`AcquisitionError`.
+        """
+        source = self.source
+        if source.authentication is not AuthenticationMethod.CDS_API:
+            raise AcquisitionError(
+                f"source {source.name!r} is not a CDS API source; acquire_cds "
+                "requires authentication=cds-api"
+            )
+        creds = resolve_credentials(source)
+        transport = cds or cds_client.CdsTransport(
+            api_url=creds["CDS_API_URL"],
+            api_key=creds["CDS_API_KEY"],
+        )
+
+        if not isinstance(inputs, dict) or not inputs:
+            raise InvalidRetrievalRequestError(
+                f"source {source.name!r}: CDS acquisition requires a non-empty inputs dict"
+            )
+        params = {"dataset": dataset, "inputs": dict(inputs)}
+        acquisition_key = acquisition_key or utcnow_aware().strftime("%Y%m%dT%H%M%SZ")
+        manifest = load_acquisition_manifest(self.manifest_path)
+        retrieved_utc = utcnow_aware()
+
+        def fail(
+            kind: AcquisitionStatus,
+            *,
+            error: str,
+            sha: str | None = None,
+            rec_id: str | None = None,
+            evidence: dict | None = None,
+        ):
+            record = _make_record(
+                source,
+                acquisition_key=acquisition_key,
+                params=params,
+                status=kind,
+                retrieved_utc=retrieved_utc,
+                sha256=sha,
+                error=error,
+                source_record_id=rec_id,
+                observation_start_utc=observation_start_utc,
+                observation_end_utc=observation_end_utc,
+                available_utc=available_utc,
+                **(evidence or {}),
+            )
+            _persist_record(manifest, record, self.manifest_path)
+            return record
+
+        # 1. Submit the execution.
+        try:
+            submission = transport.submit_with_evidence(dataset, dict(inputs))
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=source_record_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+        job_id = submission.job_id
+        submit_evidence = submission.evidence
+
+        # 2. Poll until the job finishes (or the waiting budget is exhausted).
+        try:
+            _status, _message = transport.wait_for_success(job_id)
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 2b. One extra terminal status GET: the poll loop's ``(status, message)``
+        # discards the job-state timestamps, so capture them as auditable
+        # acquisition-process evidence before proceeding. Never fabricated.
+        try:
+            poll_evidence = transport.poll_evidence(job_id)
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        # 3. Read the result assets.
+        try:
+            assets = transport.results(job_id)
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+        if not assets or not isinstance(assets[0].get("href"), str):
+            error = f"CDS job {job_id} succeeded but returned no downloadable asset"
+            fail(AcquisitionStatus.FAILED, error=error, rec_id=job_id)
+            raise AcquisitionError(f"{source.name}: {error}")
+
+        asset = assets[0]
+        extension = cds_client.asset_extension(asset)
+        relative_path = storage_relative_path(source, acquisition_key, extension)
+        target = self.raw_root / relative_path
+        if target.exists():
+            raise DuplicateArtifactError(
+                f"artifact already exists and will never be overwritten: {target}"
+            )
+
+        # 4. Download the bytes (capturing artifact-response HTTP evidence).
+        retrieved_utc = utcnow_aware()
+        request_url, request_redactions = redact_url(asset["href"])
+        try:
+            result = transport.download_with_evidence(asset["href"])
+        except Exception as exc:
+            error = _sanitize_error(exc)
+            response = getattr(exc, "response", None)
+            # Evidence stays optional on failure: the redacted target URL and
+            # method are always known, but status/headers are recorded only if a
+            # real response object is attached. Never fabricate them.
+            failure_evidence: dict = {"request_url": request_url, "request_method": "GET"}
+            if response is not None:
+                failure_evidence["http_status"] = getattr(response, "status_code", None)
+                failure_headers = _allowlisted_headers(
+                    dict(getattr(response, "headers", {}) or {})
+                )
+                if failure_headers:
+                    failure_evidence["response_headers"] = failure_headers
+            fail(
+                AcquisitionStatus.FAILED,
+                error=error,
+                rec_id=job_id,
+                evidence=failure_evidence,
+            )
+            raise AcquisitionError(f"{source.name}: {error}") from exc
+
+        data = result.content
+        final_url, final_redactions = redact_url(result.final_url)
+        redirect_chain, chain_redactions = _redact_chain(result.redirect_chain)
+        combined_redactions = sorted(
+            set(request_redactions + final_redactions + chain_redactions)
+        ) or None
+        provider_metadata = {"dataset": dataset, "job_id": job_id}
+        asset_type = asset.get("type")
+        if isinstance(asset_type, str) and asset_type:
+            provider_metadata["asset_type"] = asset_type
+        if submit_evidence:
+            provider_metadata.update(submit_evidence)
+        if poll_evidence:
+            provider_metadata.update(poll_evidence)
+        provider_metadata["cds_lifecycle_note"] = (
+            "cds_submit_*/cds_poll_* are CDS retrieval-workflow job-state timestamps, "
+            "recorded verbatim as acquisition-process evidence; they are not dataset "
+            "vintage or availability evidence."
+        )
+        evidence = dict(
+            request_url=request_url,
+            request_method="GET",
+            http_status=result.status_code,
+            response_headers=_allowlisted_headers(result.headers),
+            final_url=final_url,
+            redirect_chain=redirect_chain or None,
+            provider_metadata=provider_metadata,
+            redacted_params=combined_redactions,
+        )
+
+        # 5. Checksum (caller's value wins; otherwise the provider-declared one).
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        expected = expected_sha256 or cds_client.provider_sha256(asset)
+        if expected and expected.lower() != actual_sha256:
+            error = f"checksum mismatch: expected {expected}, got {actual_sha256}"
+            fail(AcquisitionStatus.CHECKSUM_MISMATCH, error=error, sha=actual_sha256, rec_id=job_id)
+            raise ChecksumMismatchError(f"{source.name}: {error}")
+
+        # 6. Content dedupe: identical bytes already kept -> skipped_existing.
+        kept = (AcquisitionStatus.DOWNLOADED, AcquisitionStatus.SKIPPED_EXISTING)
+        existing = [
+            record
+            for record in manifest.records
+            if record.kind == source.kind
+            and record.source == source.name
+            and record.status in kept
+            and record.sha256 == actual_sha256
+        ]
+        if existing:
+            record = _make_record(
+                source,
+                acquisition_key=acquisition_key,
+                params=params,
+                status=AcquisitionStatus.SKIPPED_EXISTING,
+                retrieved_utc=retrieved_utc,
+                sha256=actual_sha256,
+                file_size_bytes=len(data),
+                storage_path=existing[0].storage_path,
+                source_record_id=job_id,
+                observation_start_utc=observation_start_utc,
+                observation_end_utc=observation_end_utc,
+                available_utc=available_utc,
+                **evidence,
+            )
+            _persist_record(manifest, record, self.manifest_path)
+            return record
+
+        # 7. Store immutably.
+        _atomic_write(target, data)
+        record = _make_record(
+            source,
+            acquisition_key=acquisition_key,
+            params=params,
+            status=AcquisitionStatus.DOWNLOADED,
+            retrieved_utc=retrieved_utc,
+            sha256=actual_sha256,
+            file_size_bytes=len(data),
+            storage_path=relative_path,
+            source_record_id=job_id,
+            observation_start_utc=observation_start_utc,
+            observation_end_utc=observation_end_utc,
+            available_utc=available_utc,
+            **evidence,
         )
         _persist_record(manifest, record, self.manifest_path)
         return record

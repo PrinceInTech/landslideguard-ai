@@ -1,11 +1,373 @@
 {
   "contract_version": "1.1.0",
   "generated_at_utc": "2026-10-08T05:15:00Z",
-  "records": [],
+  "records": [
+    {
+      "record_id": "REAL-chirps-v2.0-2026-08-31",
+      "source": "chirps",
+      "product": "CHIRPS v2 quasi-global precipitation (0.05 deg, daily/pentad/monthly)",
+      "product_version": "v2.0",
+      "kind": "REAL",
+      "status": "downloaded",
+      "access_reference": "https://data.chc.ucsb.edu/products/CHIRPS-2.0/ (verified README Phase 2.3; anonymous HTTPS/FTP).",
+      "source_record_id": "chirps-v2.0.2026.08.31.tif.gz",
+      "retrieval_params": {
+        "url": "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2026/chirps-v2.0.2026.08.31.tif.gz",
+        "extension": ".tif.gz",
+        "bbox": [
+          88.0,
+          21.0,
+          97.5,
+          29.5
+        ]
+      },
+      "retrieved_utc": "2026-10-08T09:28:03.770613Z",
+      "acquired_utc": "2026-10-08T09:28:21.731302Z",
+      "observation_start_utc": "2026-08-31T00:00:00Z",
+      "observation_end_utc": "2026-09-01T00:00:00Z",
+      "available_utc": "2026-09-11T21:10:59Z",
+      "geographic_coverage": {
+        "min_latitude": -50.0,
+        "max_latitude": 50.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84)",
+      "license_attribution": "Per CHC CHIRPS data use policy (public dataset).",
+      "sha256": "449346515d840eeb4bf5c613a344777afe317800269386f2e93fdb3943a8d9a6",
+      "file_size_bytes": 10288665,
+      "storage_path": "chirps/chirps__v2.x__2026-08-31.tif.gz",
+      "known_limitations": [
+        "Daily accumulation window semantics are product-version dependent (v2 time coordinate = start of UTC day per ERDDAP; v3 ~00-24 UTC). Never convert daily values into arbitrary cutoffs silently.",
+        "prelim product has a ~2-day lag and uses GTS + Conagua stations only.",
+        "IR %CCD gaps over parts of E Australia/Indonesia/Japan can read as zero precipitation (coverage check required, not a fill)."
+      ],
+      "error": null
+    },
+    {
+      "record_id": "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+      "source": "era5-land",
+      "product": "ERA5-Land hourly reanalysis (land surface)",
+      "product_version": "operational (consolidated ~2 months; ERA5-Land-T ~5 days)",
+      "kind": "REAL",
+      "status": "failed",
+      "access_reference": "Copernicus Climate Data Store (CDS). DOI 10.24381/cds.e2161bac (verified Phase 2.3). No download endpoint is hardcoded; use the CDS API with registered credentials.",
+      "source_record_id": null,
+      "retrieval_params": {
+        "dataset": "reanalysis-era5-land",
+        "inputs": {
+          "variable": [
+            "2m_temperature",
+            "total_precipitation",
+            "volumetric_soil_water_layer_1",
+            "surface_runoff"
+          ],
+          "year": [
+            "2026"
+          ],
+          "month": [
+            "07"
+          ],
+          "day": [
+            "15"
+          ],
+          "time": [
+            "00:00"
+          ],
+          "area": [
+            29.5,
+            88.0,
+            21.0,
+            97.5
+          ],
+          "data_format": "netcdf",
+          "download_format": "unarchived"
+        }
+      },
+      "retrieved_utc": "2026-10-08T10:24:30.355213Z",
+      "acquired_utc": "2026-10-08T10:24:31.185480Z",
+      "observation_start_utc": "2026-07-15T00:00:00Z",
+      "observation_end_utc": "2026-07-16T00:00:00Z",
+      "available_utc": "2026-09-15T00:00:00Z",
+      "geographic_coverage": {
+        "min_latitude": -90.0,
+        "max_latitude": 90.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84 lat/lon grid)",
+      "license_attribution": "Copernicus licence; CC-BY attribution required.",
+      "sha256": null,
+      "file_size_bytes": null,
+      "storage_path": null,
+      "known_limitations": [
+        "Preserve variable names, units and aggregation semantics: soil moisture / 2m temperature are instantaneous; precipitation accumulations are 00 UTC to step end.",
+        "The consolidated archive lags ~2 months; use ERA5-Land-T (~5 days) for near-real-time.",
+        "Publication/availability gate must be applied per vintage; do not create cutoff-ready features here."
+      ],
+      "error": "CdsApiError: CDS execution POST returned HTTP 422: {\"detail\":[{\"type\":\"dict_type\",\"loc\":[\"body\",\"inputs\"],\"msg\":\"Input should be a valid dictionary\",\"input\":[{\"identifier\":\"variable\",\"value\":[\"2m_temperature\",\"total_precipitation\",\"volumetric_soil_water_layer_1\",\"surface_runoff\"]},{\"identifier\":\"year\",\"value\":[\"2026\"]},{\"identifier\":\"month\",\"value\":"
+    },
+    {
+      "record_id": "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+      "source": "era5-land",
+      "product": "ERA5-Land hourly reanalysis (land surface)",
+      "product_version": "operational (consolidated ~2 months; ERA5-Land-T ~5 days)",
+      "kind": "REAL",
+      "status": "failed",
+      "access_reference": "Copernicus Climate Data Store (CDS). DOI 10.24381/cds.e2161bac (verified Phase 2.3). No download endpoint is hardcoded; use the CDS API with registered credentials.",
+      "source_record_id": null,
+      "retrieval_params": {
+        "dataset": "reanalysis-era5-land",
+        "inputs": {
+          "variable": [
+            "2m_temperature",
+            "total_precipitation",
+            "volumetric_soil_water_layer_1",
+            "surface_runoff"
+          ],
+          "year": [
+            "2026"
+          ],
+          "month": [
+            "07"
+          ],
+          "day": [
+            "15"
+          ],
+          "time": [
+            "00:00"
+          ],
+          "area": [
+            29.5,
+            88.0,
+            21.0,
+            97.5
+          ],
+          "data_format": "netcdf",
+          "download_format": "unarchived"
+        }
+      },
+      "retrieved_utc": "2026-10-08T10:25:28.414213Z",
+      "acquired_utc": "2026-10-08T10:25:29.656017Z",
+      "observation_start_utc": "2026-07-15T00:00:00Z",
+      "observation_end_utc": "2026-07-16T00:00:00Z",
+      "available_utc": "2026-09-15T00:00:00Z",
+      "geographic_coverage": {
+        "min_latitude": -90.0,
+        "max_latitude": 90.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84 lat/lon grid)",
+      "license_attribution": "Copernicus licence; CC-BY attribution required.",
+      "sha256": null,
+      "file_size_bytes": null,
+      "storage_path": null,
+      "known_limitations": [
+        "Preserve variable names, units and aggregation semantics: soil moisture / 2m temperature are instantaneous; precipitation accumulations are 00 UTC to step end.",
+        "The consolidated archive lags ~2 months; use ERA5-Land-T (~5 days) for near-real-time.",
+        "Publication/availability gate must be applied per vintage; do not create cutoff-ready features here."
+      ],
+      "error": "CdsApiError: CDS execution POST returned HTTP 403: {\"type\":\"permission denied\",\"title\":\"required licences not accepted\",\"status\":403,\"detail\":\"Not all the required licences have been accepted; please visit https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land?tab=download#manage-licences to accept the required licence(s).\",\"instance\":\"http"
+    },
+    {
+      "record_id": "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+      "source": "era5-land",
+      "product": "ERA5-Land hourly reanalysis (land surface)",
+      "product_version": "operational (consolidated ~2 months; ERA5-Land-T ~5 days)",
+      "kind": "REAL",
+      "status": "failed",
+      "access_reference": "Copernicus Climate Data Store (CDS). DOI 10.24381/cds.e2161bac (verified Phase 2.3). No download endpoint is hardcoded; use the CDS API with registered credentials.",
+      "source_record_id": null,
+      "retrieval_params": {
+        "dataset": "reanalysis-era5-land",
+        "inputs": {
+          "variable": [
+            "2m_temperature",
+            "total_precipitation",
+            "volumetric_soil_water_layer_1",
+            "surface_runoff"
+          ],
+          "year": [
+            "2026"
+          ],
+          "month": [
+            "07"
+          ],
+          "day": [
+            "15"
+          ],
+          "time": [
+            "00:00"
+          ],
+          "area": [
+            29.5,
+            88.0,
+            21.0,
+            97.5
+          ],
+          "data_format": "netcdf",
+          "download_format": "unarchived"
+        }
+      },
+      "retrieved_utc": "2026-10-08T10:28:58.408188Z",
+      "acquired_utc": "2026-10-08T10:28:59.671777Z",
+      "observation_start_utc": "2026-07-15T00:00:00Z",
+      "observation_end_utc": "2026-07-16T00:00:00Z",
+      "available_utc": "2026-09-15T00:00:00Z",
+      "geographic_coverage": {
+        "min_latitude": -90.0,
+        "max_latitude": 90.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84 lat/lon grid)",
+      "license_attribution": "Copernicus licence; CC-BY attribution required.",
+      "sha256": null,
+      "file_size_bytes": null,
+      "storage_path": null,
+      "known_limitations": [
+        "Preserve variable names, units and aggregation semantics: soil moisture / 2m temperature are instantaneous; precipitation accumulations are 00 UTC to step end.",
+        "The consolidated archive lags ~2 months; use ERA5-Land-T (~5 days) for near-real-time.",
+        "Publication/availability gate must be applied per vintage; do not create cutoff-ready features here."
+      ],
+      "error": "CdsApiError: CDS execution POST returned HTTP 403: {\"type\":\"permission denied\",\"title\":\"required licences not accepted\",\"status\":403,\"detail\":\"Not all the required licences have been accepted; please visit https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land?tab=download#manage-licences to accept the required licence(s).\",\"instance\":\"http"
+    },
+    {
+      "record_id": "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+      "source": "era5-land",
+      "product": "ERA5-Land hourly reanalysis (land surface)",
+      "product_version": "operational (consolidated ~2 months; ERA5-Land-T ~5 days)",
+      "kind": "REAL",
+      "status": "failed",
+      "access_reference": "Copernicus Climate Data Store (CDS). DOI 10.24381/cds.e2161bac (verified Phase 2.3). No download endpoint is hardcoded; use the CDS API with registered credentials.",
+      "source_record_id": null,
+      "retrieval_params": {
+        "dataset": "reanalysis-era5-land",
+        "inputs": {
+          "variable": [
+            "2m_temperature",
+            "total_precipitation",
+            "volumetric_soil_water_layer_1",
+            "surface_runoff"
+          ],
+          "year": [
+            "2026"
+          ],
+          "month": [
+            "07"
+          ],
+          "day": [
+            "15"
+          ],
+          "time": [
+            "00:00"
+          ],
+          "area": [
+            29.5,
+            88.0,
+            21.0,
+            97.5
+          ],
+          "data_format": "netcdf",
+          "download_format": "unarchived"
+        }
+      },
+      "retrieved_utc": "2026-10-08T10:30:09.711519Z",
+      "acquired_utc": "2026-10-08T10:30:12.200848Z",
+      "observation_start_utc": "2026-07-15T00:00:00Z",
+      "observation_end_utc": "2026-07-16T00:00:00Z",
+      "available_utc": "2026-09-15T00:00:00Z",
+      "geographic_coverage": {
+        "min_latitude": -90.0,
+        "max_latitude": 90.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84 lat/lon grid)",
+      "license_attribution": "Copernicus licence; CC-BY attribution required.",
+      "sha256": null,
+      "file_size_bytes": null,
+      "storage_path": null,
+      "known_limitations": [
+        "Preserve variable names, units and aggregation semantics: soil moisture / 2m temperature are instantaneous; precipitation accumulations are 00 UTC to step end.",
+        "The consolidated archive lags ~2 months; use ERA5-Land-T (~5 days) for near-real-time.",
+        "Publication/availability gate must be applied per vintage; do not create cutoff-ready features here."
+      ],
+      "error": "CdsApiError: CDS execution POST returned HTTP 403: {\"type\":\"permission denied\",\"title\":\"required licences not accepted\",\"status\":403,\"detail\":\"Not all the required licences have been accepted; please visit https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land?tab=download#manage-licences to accept the required licence(s).\",\"instance\":\"http"
+    },
+    {
+      "record_id": "REAL-era5-land-operational-consolidated-2-months-era5-land-t-5-days-2026-07-15t0000",
+      "source": "era5-land",
+      "product": "ERA5-Land hourly reanalysis (land surface)",
+      "product_version": "operational (consolidated ~2 months; ERA5-Land-T ~5 days)",
+      "kind": "REAL",
+      "status": "downloaded",
+      "access_reference": "Copernicus Climate Data Store (CDS). DOI 10.24381/cds.e2161bac (verified Phase 2.3). No download endpoint is hardcoded; use the CDS API with registered credentials.",
+      "source_record_id": "4548c91f-9c24-48c3-8e55-12c4ab786ae6",
+      "retrieval_params": {
+        "dataset": "reanalysis-era5-land",
+        "inputs": {
+          "variable": [
+            "2m_temperature",
+            "total_precipitation",
+            "volumetric_soil_water_layer_1",
+            "surface_runoff"
+          ],
+          "year": [
+            "2026"
+          ],
+          "month": [
+            "07"
+          ],
+          "day": [
+            "15"
+          ],
+          "time": [
+            "00:00"
+          ],
+          "area": [
+            29.5,
+            88.0,
+            21.0,
+            97.5
+          ],
+          "data_format": "netcdf",
+          "download_format": "unarchived"
+        }
+      },
+      "retrieved_utc": "2026-10-08T11:09:48.348904Z",
+      "acquired_utc": "2026-10-08T11:09:48.357679Z",
+      "observation_start_utc": "2026-07-15T00:00:00Z",
+      "observation_end_utc": "2026-07-15T01:00:00Z",
+      "available_utc": "2026-09-15T00:00:00Z",
+      "geographic_coverage": {
+        "min_latitude": -90.0,
+        "max_latitude": 90.0,
+        "min_longitude": -180.0,
+        "max_longitude": 180.0
+      },
+      "crs": "EPSG:4326 (WGS84 lat/lon grid)",
+      "license_attribution": "Copernicus licence; CC-BY attribution required.",
+      "sha256": "af53a81a84460ab9abaf209f4535584e4c85404dbbb89b39e06db8f9c0824ac9",
+      "file_size_bytes": 127970,
+      "storage_path": "era5-land/era5-land__operational-consolidated-2-months-era5-land-t-5-days__2026-07-15t0000.nc",
+      "known_limitations": [
+        "Preserve variable names, units and aggregation semantics: soil moisture / 2m temperature are instantaneous; precipitation accumulations are 00 UTC to step end.",
+        "The consolidated archive lags ~2 months; use ERA5-Land-T (~5 days) for near-real-time.",
+        "Publication/availability gate must be applied per vintage; do not create cutoff-ready features here."
+      ],
+      "error": null
+    }
+  ],
   "notes": [
     "Acquisition ledger (Phase 3.2). One record per actual retrieval attempt (downloaded, skipped_existing, checksum_mismatch, failed) for DEMO and REAL acquisition events.",
     "No REAL artifact has been acquired yet: registering adapters/configuration never implies that REAL data exists. The REAL acquired count is 0.",
     "Raw bytes are stored under data/raw/real/ (git-ignored) with immutable filenames and SHA-256; this ledger is committed metadata only.",
-    "Schema: backend/app/schemas/acquisition.py. Rig: backend/app/services/acquisition.py. See docs/acquisition.md."
+    "Schema: backend/app/schemas/acquisition.py. Rig: backend/app/services/acquisition.py. See docs/acquisition.md.",
+    "Phase 3.4 (2026-10-08): first live nasa-imerg-early attempt. Directory listings and URS token-list API authenticated (HTTP 200); V07C granules exist for day 281 (2026-10-08). Granule file download enforces URS bearer-token file access; token minting via POST https://urs.earthdata.nasa.gov/api/users/tokens returned the Earthdata Login HTML page (not JSON) in this environment, so no file artifact was acquired. Verdict: IMERG_LIVE_PREFLIGHT_FAILED. No substitute source was used.",
+    "Phase 3.5 (2026-10-08): first live chirps acquisition. Provider verified on 2026-10-08: daily v2 files are gzip TIFFs under products/CHIRPS-2.0/global_daily/tifs/p05/<year>/ on https://data.chc.ucsb.edu (HTTP GET 200, Content-Length matches FTP). Latest FINAL daily available was 2026-08-31 (month-ahead publication cadence). Acquired and validated chirps-v2.0.2026.08.31.tif.gz (10,288,665 B, SHA-256 44934651...): float32 GeoTIFF 7200x2000, EPSG:4326, 0.05 deg, -9999 fill, NE-India window 171x191 px, 4.6% fill, 0..186.0 mm, mean 19.2 mm. Supersedes the earlier note that no REAL artifact had been acquired: the REAL acquired count is now 1.",
+    "Phase 3.6 (2026-10-08): era5-land blocked at the CDS authentication gate. Provider/product were verified live from official CDS metadata on 2026-10-08: dataset reanalysis-era5-land (DOI 10.24381/cds.e2161bac), ERA5-Land hourly 1950-present, 0.1-degree lat/lon global grid, 60 verified variables, hourly time steps, bounded area subsetting (min 0.1 deg), GRIB or NetCDF4-experimental, CC-BY-4.0 licence; CDS execution API /api/retrieve/v1/jobs returns 401 unauthenticated (Personal Access Token required). The registry source requires CDS_API_URL + CDS_API_KEY; neither variable is configured in any env/.env, so resolve_credentials raised CredentialsMissingError and no network call, byte or record resulted. Verdict: ERA5_LAND_LIVE_PREFLIGHT_FAILED (authentication). No substitute source was used; CHIRPS record untouched.",
+    "Phase 3.6 (2026-10-08): first live era5-land (CDS) acquisition recorded. CDS async flow implemented in backend/app/services/cds.py (submit->poll->results->download, PRIVATE-TOKEN auth) and AcquisitionDriver.acquire_cds. Job 4548c91f-9c24-48c3-8e55-12c4ab786ae6 successful; 4 earlier attempts honestly recorded failed (1x HTTP 422 request-body format fix, 3x HTTP 403 licence gate before account-level acceptance). Artifact data/raw/real/era5-land/era5-land__operational-consolidated-2-months-era5-land-t-5-days__2026-07-15t0000.nc 127970 B sha256 af53a81a84460ab9abaf209f4535584e4c85404dbbb89b39e06db8f9c0824ac9. Pre-commit validation: readable NetCDF (CDS short names t2m/tp/swvl1/sro for 2m_temperature/total_precipitation/volumetric_soil_water_layer_1/surface_runoff; units K/m/m3.m-3/m); valid_time 2026-07-15T00:00Z; lat 21.0-29.5 step 0.1 (86), lon 88.0-97.5 step 0.1 (96); EPSG:4326. Four-time semantics: observation 2026-07-15 00:00-01:00Z, available 2026-09-15T00:00Z (DERIVED conservative bound; CDS exposes no per-vintage availability timestamp; consolidated ~2 months per registry), retrieved 2026-10-08T11:09:48Z, acquired 2026-10-08T11:09:48Z. Both observation and available precede the prediction window used today. REAL acquired count is now 2; no IMERG retry this phase (external gate)."
   ]
 }

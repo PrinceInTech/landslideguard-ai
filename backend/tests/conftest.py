@@ -29,10 +29,12 @@ PROJECT_ROOT = BACKEND_DIR.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-# Must be set before app.config is imported: production mode refuses to start
-# with the default signing key and admin password.
+# Must be set before app.config is imported: outside an explicitly local
+# environment the app refuses to start with the default signing key and admin
+# password. The signing-key variable must match what config.py actually reads
+# (JWT_SECRET) or the suite silently runs on the built-in demo secret.
 os.environ.setdefault("ENVIRONMENT", "test")
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-used-in-production-0123456789")
+os.environ.setdefault("JWT_SECRET", "test-secret-key-not-used-in-production-0123456789")
 os.environ.setdefault("DEMO_ADMIN_PASSWORD", "test-admin-password")
 os.environ.setdefault("DATA_MODE", "DEMO")
 
@@ -146,6 +148,21 @@ def client(_test_db_url, monkeypatch):
         yield test_client
 
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Clear the in-process auth rate limiter around every test.
+
+    The limiter is module-global, so without this an accumulation of the normal
+    login/register calls made by other fixtures could trip the limit partway
+    through a run. Resetting before *and* after keeps each test hermetic.
+    """
+    from app.services import rate_limit
+
+    rate_limit.reset_rate_limits()
+    yield
+    rate_limit.reset_rate_limits()
 
 
 @pytest.fixture()

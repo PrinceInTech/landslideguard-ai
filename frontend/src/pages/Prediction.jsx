@@ -7,6 +7,7 @@ import FactorBar from '../components/FactorBar'
 import RiskBadge from '../components/RiskBadge'
 import RiskBandRuler from '../components/RiskBandRuler'
 import { useApi } from '../hooks/useApi'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { formatTs } from '../utils/risk'
 
 const LAND_COVERS = ['Dense Forest', 'Open Forest', 'Shrubland', 'Agriculture', 'Barren/Rocky']
@@ -42,6 +43,7 @@ export default function Prediction() {
   const [locations, setLocations] = useState([])
 
   const history = useApi('/api/predictions')
+  const { isOnline } = useOnlineStatus()
 
   useEffect(() => {
     api.get('/api/locations').then((r) => setLocations(r.data || [])).catch(() => {})
@@ -211,9 +213,11 @@ export default function Prediction() {
           )}
 
           <div className="space-y-2">
-            <button type="submit" disabled={busy} className="btn-primary w-full justify-center !py-3">
+            <button type="submit" disabled={busy || !isOnline} className="btn-primary w-full justify-center !py-3">
               {busy ? (
                 <><BrainCircuit className="h-5 w-5 animate-pulse" /> Predicting…</>
+              ) : !isOnline ? (
+                <><AlertTriangle className="h-5 w-5" /> Offline — prediction needs the backend</>
               ) : writes ? (
                 <><Save className="h-5 w-5" /> Run prediction and update {form.location}</>
               ) : (

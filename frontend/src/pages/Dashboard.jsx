@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   MapPin,
@@ -13,15 +13,19 @@ import {
   RefreshCw,
   Pause,
   Play,
+  WifiOff,
 } from 'lucide-react'
 import { usePolling } from '../hooks/useApi'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import StatCard from '../components/StatCard'
 import RiskBadge from '../components/RiskBadge'
 import DataSourceBadge from '../components/DataSourceBadge'
 import DataFreshness from '../components/DataFreshness'
 import NeedsAttention from '../components/NeedsAttention'
+import OfflineDashboard from '../components/OfflineDashboard'
 import { PageState, InlineError } from '../components/States'
 import { riskMeta, formatTs } from '../utils/risk'
+import { saveDashboardSummary, loadDashboardSummary } from '../services/offlineCache'
 import {
   BarChart,
   Bar,
@@ -37,9 +41,37 @@ const CERTAINTY_HELP =
 
 export default function Dashboard() {
   const [paused, setPaused] = useState(false)
+  const { isOnline } = useOnlineStatus()
   const summary = usePolling('/api/risk-summary', 20000, [], { paused })
   const locations = usePolling('/api/locations', 20000, [], { paused })
   const alerts = usePolling('/api/alerts', 30000, [], { paused })
+
+  // Persist a sanitized, non-sensitive snapshot after every successful summary
+  // response so a read-only fallback exists the next time we are offline.
+  useEffect(() => {
+    if (summary.data) saveDashboardSummary(summary.data)
+  }, [summary.data])
+
+  // Only read the cache while offline; coming back online drops it immediately
+  // and the live endpoints take over (stale warning removed on success).
+  const cached = useMemo(() => (isOnline ? null : loadDashboardSummary()), [isOnline])
+
+  // Offline with nothing live: show the clearly-labelled stale snapshot (or a
+  // plain "offline" notice) instead of a loading skeleton that never resolves.
+  if (!isOnline && !summary.data) {
+    return cached ? (
+      <OfflineDashboard cached={cached} />
+    ) : (
+      <div className="card flex flex-col items-center gap-3 py-16 text-center">
+        <WifiOff className="h-10 w-10 text-slate-600" aria-hidden="true" />
+        <p className="font-bold text-slate-200">You are offline</p>
+        <p className="max-w-md text-sm text-slate-400">
+          The dashboard needs a backend connection and no cached snapshot is available yet.
+          It will load automatically once you reconnect.
+        </p>
+      </div>
+    )
+  }
 
   // Three independent polls feed this page. Only gate the whole page while the
   // summary is still loading; otherwise each panel reports its own state so a
@@ -99,6 +131,8 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={refreshAll}
+            disabled={!isOnline}
+            title={isOnline ? undefined : 'Refresh needs a backend connection'}
             className="btn-outline !py-1.5 text-xs"
             aria-label="Refresh all dashboard data now"
           >
@@ -120,6 +154,16 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {!isOnline && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-2 text-xs font-medium text-amber-300"
+        >
+          Offline — STALE / LAST UPDATED {riskAsOf ? formatTs(riskAsOf) : 'unknown'}. These values
+          are the last successful reading; live updates resume when you reconnect.
+        </p>
+      )}
 
       {paused && (
         <p className="rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-2 text-xs font-medium text-amber-300">

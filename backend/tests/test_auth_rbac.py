@@ -106,3 +106,143 @@ def test_seeded_admin_uses_configured_password(client):
     )
     assert resp.status_code == 200
     assert resp.json()["user"]["role"] == "admin"
+
+
+# --- Phase 3.8: write endpoints require an authenticated user --------------
+#
+# Established policy (matches the documented authorization model and the
+# frontend, whose dashboard pages are auth-gated but not admin-gated): every
+# in-scope mutation requires a valid bearer token. Any authenticated role
+# (`viewer` or `admin`) may mutate; only `/api/admin/**` additionally requires
+# `admin`. Bodies are valid so that, for an anonymous or bad-token request, the
+# only possible failure is the authorization check -- never request validation.
+
+_MUTATING_ENDPOINTS = [
+    (
+        "post",
+        "/api/locations",
+        {
+            "name": "Auth Probe",
+            "state": "Assam",
+            "district": "Probe",
+            "latitude": 26.1,
+            "longitude": 92.8,
+            "elevation": 300,
+            "slope": 20,
+        },
+    ),
+    ("put", "/api/locations/1", {"name": "Auth Probe"}),
+    ("delete", "/api/locations/1", None),
+    (
+        "post",
+        "/api/alerts",
+        {
+            "location_id": 1,
+            "risk_level": "HIGH",
+            "risk_score": 70,
+            "message": "auth probe",
+        },
+    ),
+    ("put", "/api/alerts/1", {"status": "acknowledged"}),
+    (
+        "post",
+        "/api/predict",
+        {
+            "rainfall": 120,
+            "soil_moisture": 70,
+            "temperature": 24,
+            "humidity": 80,
+            "elevation": 900,
+            "slope": 32,
+        },
+    ),
+    ("post", "/api/predict/location/1", None),
+]
+
+
+def _call(client, method, path, body, headers=None):
+    kwargs = {}
+    if headers is not None:
+        kwargs["headers"] = headers
+    if body is not None:
+        kwargs["json"] = body
+    return getattr(client, method)(path, **kwargs)
+
+
+def test_mutating_endpoints_require_authentication(client):
+    """Anonymous requests must not be able to mutate any in-scope resource."""
+    for method, path, body in _MUTATING_ENDPOINTS:
+        resp = _call(client, method, path, body)
+        assert resp.status_code == 401, f"{method.upper()} {path} returned {resp.status_code}"
+
+
+def test_mutating_endpoints_reject_invalid_token(client):
+    """A syntactically present but invalid token must not authorize a mutation."""
+    for method, path, body in _MUTATING_ENDPOINTS:
+        resp = _call(client, method, path, body, {"Authorization": "Bearer not-a-jwt"})
+        assert resp.status_code == 401, f"{method.upper()} {path} returned {resp.status_code}"
+
+
+def test_authenticated_viewer_can_mutate(client, viewer):
+    """The chosen minimal policy keeps the existing workflow: any signed-in user
+    (the `viewer` role) may manage locations, alerts and predictions."""
+    headers = {"Authorization": f"Bearer {viewer['access_token']}"}
+
+    created = _call(
+        client,
+        "post",
+        "/api/locations",
+        {
+            "name": "Auth Probe Site",
+            "state": "Assam",
+            "district": "Probe",
+            "latitude": 26.15,
+            "longitude": 92.85,
+            "elevation": 300,
+            "slope": 20,
+        },
+        headers,
+    )
+    assert created.status_code in (200, 201), created.text
+    loc_id = created.json()["id"]
+
+    updated = _call(client, "put", f"/api/locations/{loc_id}", {"slope": 25}, headers)
+    assert updated.status_code == 200, updated.text
+
+    predicted = _call(
+        client,
+        "post",
+        "/api/predict",
+        {
+            "location": "Auth Probe Site",
+            "rainfall": 120,
+            "soil_moisture": 70,
+            "temperature": 24,
+            "humidity": 80,
+            "elevation": 300,
+            "slope": 25,
+        },
+        headers,
+    )
+    assert predicted.status_code == 200, predicted.text
+
+    alert = _call(
+        client,
+        "post",
+        "/api/alerts",
+        {
+            "location_id": loc_id,
+            "risk_level": "HIGH",
+            "risk_score": 70,
+            "message": "auth probe",
+        },
+        headers,
+    )
+    assert alert.status_code in (200, 201), alert.text
+    alert_id = alert.json()["id"]
+
+    acked = _call(client, "put", f"/api/alerts/{alert_id}", {"status": "acknowledged"}, headers)
+    assert acked.status_code == 200, acked.text
+
+    deleted = _call(client, "delete", f"/api/locations/{loc_id}", None, headers)
+    assert deleted.status_code == 204, deleted.text

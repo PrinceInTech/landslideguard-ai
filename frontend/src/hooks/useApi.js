@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import api from '../services/api'
+import { useOnlineStatus } from './useOnlineStatus'
+
+// Shown instead of firing a request that cannot succeed while the browser is
+// offline. Kept as a constant so tests and callers can match on it.
+export const OFFLINE_ERROR = 'You are offline — reconnect to load this data.'
 
 /** Fetch hook with loading/error/data + reload. */
 export function useApi(path, deps = []) {
+  const { isOnline } = useOnlineStatus()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -22,11 +28,19 @@ export function useApi(path, deps = []) {
   }
 
   useEffect(() => {
+    // Do not fire a doomed request while offline; surface why instead. When
+    // the browser comes back online the dependency change triggers a reload
+    // through the normal API client.
+    if (!isOnline) {
+      setLoading(false)
+      setError(OFFLINE_ERROR)
+      return
+    }
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps])
+  }, [isOnline, ...deps])
 
-  return { data, loading, error, reload: load }
+  return { data, loading, error, reload: load, offline: !isOnline }
 }
 
 /**
@@ -39,6 +53,7 @@ export function useApi(path, deps = []) {
  */
 export function usePolling(path, intervalMs = 15000, deps = [], opts = {}) {
   const paused = Boolean(opts.paused)
+  const { isOnline } = useOnlineStatus()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -58,6 +73,13 @@ export function usePolling(path, intervalMs = 15000, deps = [], opts = {}) {
   }
 
   useEffect(() => {
+    // While offline, stop polling and keep the last good payload rather than
+    // spamming failed requests. Coming back online re-runs this effect, which
+    // refreshes through the normal API client.
+    if (!isOnline) {
+      setLoading(false)
+      return undefined
+    }
     // Fetch immediately on mount, on resume and whenever deps change, then
     // keep going while not paused.
     load()
@@ -65,7 +87,7 @@ export function usePolling(path, intervalMs = 15000, deps = [], opts = {}) {
     const timer = setInterval(load, intervalMs)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, paused, ...deps])
+  }, [intervalMs, paused, isOnline, ...deps])
 
-  return { data, loading, error, lastFetched, reload: load }
+  return { data, loading, error, lastFetched, reload: load, offline: !isOnline }
 }

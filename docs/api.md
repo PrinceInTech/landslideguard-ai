@@ -106,10 +106,14 @@ Response:
   "contributing_factors": [ { "factor": "Rainfall", "value": 200, "contribution": 100.0 } ],
   "recommended_actions": ["ISSUE EMERGENCY ALERT — initiate evacuation..."],
   "model": "RandomForestClassifier (trained on DEMO data)",
-  "data_source": "DEMO"
+  "data_source": "DEMO",
+  "prediction_mode": "demo"
 }
 ```
 Numeric inputs are range-validated; out-of-range values return `422`.
+
+`prediction_mode` is `"demo"` on every response from this route, matching the
+DEMO-trained model; it never indicates production readiness.
 
 ### `POST /api/predict/location/{location_id}`
 Predict using the stored location + live/demo environmental data. Also persists
@@ -135,6 +139,91 @@ Historical + current analytics:
 
 ### `GET /api/weather/{location_name}`
 Current conditions for a location (LIVE or DEMO, reported in `data_source`).
+
+### `POST /api/extract`
+Run evidence-gated temporal feature extraction over a **committed** real
+acquisition (see `docs/features.md`). Requires a valid JWT. The request names a
+source, a point, a prediction cutoff, the features to compute and an
+availability policy; the service resolves the matching acquisition record from
+the committed manifest and evaluates it — it never downloads data.
+
+```json
+{
+  "source": "chirps",
+  "position": { "latitude": 28.02, "longitude": 90.03 },
+  "prediction_cutoff_utc": "2026-10-08T12:00:00Z",
+  "requested_features": ["precipitation_daily_mm"],
+  "availability_policy": "research_replay"
+}
+```
+
+The response is a `FeatureExtractionResult` (`contract_version`, resolved
+`artifact_sha256`, `acquisition_record_id`, and one entry per requested
+feature). Each feature carries a status — `valid`, `missing`,
+`insufficient_temporal_coverage` or `rejected_leakage` — plus provenance. A
+policy rejection is **not** an error: it returns `200` with the honest status
+and a `null` value, so callers can tell "the evidence does not permit this
+value" from "the request was malformed".
+
+Failure mapping:
+- `401` — missing or invalid token.
+- `409` — the resolved artifact is absent or unreadable, or no real acquisition
+  exists for the source. The detail never includes a server path.
+- `422` — a contract violation (unsupported source, point outside the study
+  region, unknown feature name, unrecognised `artifact_sha256`, or a malformed
+  artifact). Absolute paths are redacted.
+
+### `POST /api/provenance/validate`
+Provenance-gated **prediction-input validation**. Requires a valid JWT (any
+role). It takes the **same request** as `POST /api/extract` (source, position,
+`prediction_cutoff_utc`, `requested_features`, `availability_policy`) and reuses
+the same protected extraction pipeline unchanged, but returns an explicit
+*validation report* instead of a prediction.
+
+```json
+{
+  "source": "chirps",
+  "position": { "latitude": 28.02, "longitude": 90.03 },
+  "prediction_cutoff_utc": "2026-10-08T12:00:00Z",
+  "requested_features": ["precipitation_daily_mm"],
+  "availability_policy": "research_replay"
+}
+```
+
+The response is a `ProvenanceGateResponse`. It is **never** a prediction — the
+DEMO model is deliberately not invoked:
+
+- `prediction_mode` = `"provenance_gated_validation"`, `is_prediction` = `false`,
+  `model_invoked` = `false`, `model` = `"none (DEMO model deliberately not invoked)"`.
+- `model_compatibility` = `"incompatible"` with a `model_compatibility_reason`;
+  the REAL feature vocabulary cannot feed the DEMO model.
+- `disclaimer` states that provenance-valid inputs are not evidence of accuracy.
+- `production_readiness` = `"NO-GO"` (the frozen subsystem stance, independent of
+  the per-request `availability_policy`).
+
+Gate decision fields:
+
+| Field | Meaning |
+| ----- | ------- |
+| `availability_policy` | echo of the requested policy |
+| `verdict` | `accepted_for_research`, `accepted_for_production`, or `rejected` |
+| `verdict_reason` | why that verdict was reached |
+| `checksum_verification` | always `"verified"` for the resolved artifact |
+| `temporal_eligibility` | `eligible` or `rejected` for the cutoff |
+| `accepted_features` | names of features that passed every gate |
+| `rejected_features` | `ProvenanceGateFeatureDecision` entries with honest reasons |
+| `feature_decisions` | every requested feature's decision + traceability |
+| `result` | the full `FeatureExtractionResult`, unchanged (see `/api/extract`) |
+
+A rejection is **not** an error: it returns `200` with the per-feature reasons and
+a `null` value for each rejected feature. No value is ever fabricated. Failure
+mapping matches `/api/extract`:
+- `401` — missing or invalid token.
+- `409` — the resolved artifact is absent or unreadable, or no real acquisition
+  exists for the source. The detail never includes a server path.
+- `422` — a contract violation (unsupported source, point outside the study
+  region, unknown feature name, unrecognised `artifact_sha256`, or a malformed
+  artifact). Absolute paths are redacted.
 
 ### `GET /`
 Service banner (name + version).
@@ -218,16 +307,18 @@ Standard FastAPI semantics:
 
 | Surface | Requirement |
 | ------- | ----------- |
-| Read-only endpoints (`/api/locations`, `/risk-summary`, `/predict`, `/analytics`, `/alerts` GET) | none |
-| Write endpoints (`POST`/`PUT`/`DELETE` on locations and alerts) | none — see the note below |
+| Read endpoints (`GET /api/locations`, `/risk-summary`, `/analytics`, `/alerts`, `/predictions`) | none |
+| Write endpoints (`POST`/`PUT`/`DELETE` on locations and alerts; `POST /api/predict` and `POST /api/predict/location/{id}`; `POST /api/extract` and `POST /api/provenance/validate`) | valid JWT (any role) |
 | `/api/admin/**` | valid JWT **and** `role == "admin"` |
 | Self-registration | always creates `role == "viewer"` |
 
-The seeded demo admin (`DEMO_ADMIN_EMAIL`) is the only account that starts as an
-admin; `viewer` cannot reach `/api/admin/**` and the UI hides the Admin nav
-entry for them.
+Anonymous or invalid-token requests to a write endpoint return `401`. Any
+authenticated user — `viewer` or `admin` — may perform these writes, matching
+the UI, which shows the location/alert/prediction controls to every signed-in
+user and only hides the Admin area from non-admins. The seeded demo admin
+(`DEMO_ADMIN_EMAIL`) is the only account that starts as an admin; `viewer`
+cannot reach `/api/admin/**`.
 
-**Known limitation:** location and alert *writes* are currently unauthenticated,
-so anyone who can reach the API can create or delete locations. This is
-acceptable for a single-user demo but is not safe on a public deployment.
-Adding a `get_current_user` dependency to those routes is the intended fix.
+*Previously* (through Phase 3.7) location, alert and prediction writes were
+unauthenticated; Phase 3.8 added a `get_current_user` dependency to every
+mutating route.

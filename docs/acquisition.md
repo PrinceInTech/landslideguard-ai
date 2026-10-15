@@ -80,7 +80,9 @@ silently converted into arbitrary cutoffs.
 successes **and** failures. It distinguishes DEMO and REAL
 (`AcquisitionRecord.kind`). Reporting a source as "acquired" is only possible
 when bytes were actually obtained, checksummed and the record persisted.
-`acquired_real_count()` returns 0 until real bytes exist.
+`acquired_real_count()` returns 0 only until real bytes exist; the committed
+ledger currently records **two** REAL acquisitions (a CHIRPS daily file in Phase
+3.5 and an ERA5-Land hourly file in Phase 3.6) alongside the DEMO records.
 
 ## Preflight (COOLR)
 
@@ -102,7 +104,10 @@ tests never hit the network.
 
 ## Scope notes
 
-- The rig was validated against a fresh mock environment in Phase 3.2; the
-  committed ledger contains **zero** REAL records.
-- Acquiring, verifying connectivity, and recording real assets is the next
-  phase (`PHASE 3.3`).
+- The rig was validated against a fresh mock environment in Phase 3.2. At that
+  point the committed ledger contained **zero** REAL records; later phases
+  acquired **two** (a CHIRPS daily file in Phase 3.5 and an ERA5-Land hourly file
+  in Phase 3.6), all recorded honestly in
+  `data/provenance/acquisition_manifest.json`.
+- Acquiring, verifying connectivity, and recording real assets continued in
+  later phases (`PHASE 3.3` onward).

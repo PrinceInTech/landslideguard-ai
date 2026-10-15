@@ -113,6 +113,7 @@ def predict(features: dict, location_data: dict = None):
         "recommended_actions": recommended_actions(risk_level, contributions),
         "model": "RandomForestClassifier (trained on DEMO data)",
         "data_source": settings.DATA_MODE,
+        "prediction_mode": "demo",
     }
     return result
 
@@ -211,4 +212,5 @@ def _rule_based_predict(features):
         "recommended_actions": recommended_actions(risk_level, contributions),
         "model": "Rule-based fallback",
         "data_source": settings.DATA_MODE,
+        "prediction_mode": "demo",
     }

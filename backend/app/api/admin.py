@@ -101,11 +101,12 @@ async def upload_dataset(file: UploadFile = File(...), _: object = Depends(get_c
 def retrain_model(_: object = Depends(get_current_admin)):
     train_script = settings.TRAIN_SCRIPT
     if not train_script.exists():
+        # No filesystem path in the client response.
         raise HTTPException(
             status_code=500,
-            detail=f"Training script not found at {train_script}. "
+            detail="Training script is not available in this deployment. "
                    "The ml/ directory must be deployed alongside the backend "
-                   "(set TRAIN_SCRIPT to override).",
+                   "(or TRAIN_SCRIPT set to its location).",
         )
     env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
     try:
@@ -116,13 +117,15 @@ def retrain_model(_: object = Depends(get_current_admin)):
         )
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Training timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Training failed: {e}")
+    except Exception:
+        # Do not echo the underlying error (it can name paths/interpreters).
+        raise HTTPException(status_code=500, detail="Training could not be started")
 
     if proc.returncode != 0:
+        # Exit code only; stderr can contain absolute paths and is never returned.
         raise HTTPException(
             status_code=500,
-            detail=f"Training failed (exit {proc.returncode}): {(proc.stderr or proc.stdout)[-2000:]}",
+            detail=f"Training failed (exit code {proc.returncode}).",
         )
 
     # Clear the model cache so the newly trained model is picked up on next call.
@@ -133,7 +136,8 @@ def retrain_model(_: object = Depends(get_current_admin)):
             status_code=500,
             detail="Training completed but the resulting model could not be loaded.",
         )
-    return {"message": "Model retrained successfully", "output": proc.stdout[-500:]}
+    # The raw training log is not returned: it can contain filesystem paths.
+    return {"message": "Model retrained successfully"}
 
 
 @router.post("/trigger-predict")
@@ -149,14 +153,16 @@ def trigger_prediction(_: object = Depends(get_current_admin), db: Session = Dep
 
 @router.get("/settings")
 def admin_settings(_: object = Depends(get_current_admin)):
+    # Report capability, never the sensitive value: the database URL can carry
+    # credentials, and full filesystem paths expose the server layout. The
+    # frontend only consumes `data_mode`, `database`, `model_path` and
+    # `weather_api_configured`, all of which remain present.
     return {
         "data_mode": settings.DATA_MODE,
         "weather_api_configured": bool(settings.OPENWEATHER_API_KEY),
-        "database": settings.DATABASE_URL,
-        "model_path": str(settings.MODEL_PATH),
+        "database": settings.DATABASE_URL.split("://", 1)[0],
+        "model_path": settings.MODEL_PATH.name,
         "model_present": settings.MODEL_PATH.exists(),
-        "project_root": str(PROJECT_ROOT),
-        "train_script": str(settings.TRAIN_SCRIPT),
         "train_script_present": settings.TRAIN_SCRIPT.exists(),
         "environment": settings.ENVIRONMENT,
     }

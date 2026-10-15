@@ -13,3 +13,8 @@ scikit-learn>=1.4.0
 joblib>=1.3.0
 requests>=2.31.0
 email-validator>=2.1.0
+# ERA5-Land NetCDF decoding. Required by the real-data reader in
+# app/services/features.py (imported lazily, so DEMO/CHIRPS-only runs do not
+# need it at import time, but the ERA5 artifact path cannot run without it).
+# Floor matches the 1.7.x series, which supports the project's Python range.
+netCDF4>=1.7.0

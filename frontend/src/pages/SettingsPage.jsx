@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Settings as SettingsIcon, Server, Database, Cloud, Shield, Info } from 'lucide-react'
+import { Settings as SettingsIcon, Server, Database, Cloud, Shield, ShieldCheck, Info } from 'lucide-react'
 import api from '../services/api'
 import { PageState } from '../components/States'
+import { useAuth } from '../hooks/useAuth'
 
 export default function SettingsPage() {
+  const { isAdmin } = useAuth()
   const [health, setHealth] = useState(null)
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -23,7 +25,27 @@ export default function SettingsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    // Only the admin view calls the admin-only endpoint; a viewer must never
+    // trigger a guaranteed 403.
+    if (isAdmin) load()
+  }, [isAdmin])
+
+  // The backend enforces admin on every /api/admin route; this guard keeps a
+  // signed-in viewer from watching the page fail with a raw 403. Role comes
+  // from the shared auth state and is treated as non-admin until proven admin,
+  // so a missing user/role falls through to this denied state.
+  if (!isAdmin) {
+    return (
+      <div className="card flex flex-col items-center gap-3 py-16 text-center">
+        <ShieldCheck className="h-10 w-10 text-slate-600" />
+        <p className="font-bold text-slate-200">Admin access required</p>
+        <p className="text-sm text-slate-400">
+          Please sign in with an admin account to view system settings.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -77,7 +99,7 @@ export default function SettingsPage() {
             <p>DATABASE_URL=sqlite:///backend/landslideguard.db</p>
             <p>DATA_MODE=DEMO</p>
             <p>OPENWEATHER_API_KEY= (optional, enables LIVE)</p>
-            <p>JWT_SECRET=change-me-in-production</p>
+            <p>JWT_SECRET=&lt;generate a unique value&gt;</p>
           </div>
         </div>
       </PageState>

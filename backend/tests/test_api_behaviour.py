@@ -45,9 +45,10 @@ def test_location_carries_true_data_source(client):
     assert env.get("data_source") in ("DEMO", "LIVE")
 
 
-def test_prediction_valid_payload(client):
+def test_prediction_valid_payload(client, admin_headers):
     resp = client.post(
         "/api/predict",
+        headers=admin_headers,
         json={
             "rainfall": 120,
             "soil_moisture": 70,
@@ -76,7 +77,7 @@ def test_prediction_valid_payload(client):
         ("temperature", 90),
     ],
 )
-def test_prediction_rejects_out_of_range_values(client, field, value):
+def test_prediction_rejects_out_of_range_values(client, admin_headers, field, value):
     payload = {
         "rainfall": 100,
         "soil_moisture": 60,
@@ -86,16 +87,17 @@ def test_prediction_rejects_out_of_range_values(client, field, value):
         "slope": 30,
     }
     payload[field] = value
-    resp = client.post("/api/predict", json=payload)
+    resp = client.post("/api/predict", headers=admin_headers, json=payload)
     assert resp.status_code == 422, f"{field}={value} should be rejected"
 
 
-def test_higher_risk_conditions_produce_higher_score(client):
+def test_higher_risk_conditions_produce_higher_score(client, admin_headers):
     """Monotonic sanity check on the scoring direction."""
 
     def score(rainfall, moisture, slope):
         resp = client.post(
             "/api/predict",
+            headers=admin_headers,
             json={
                 "rainfall": rainfall,
                 "soil_moisture": moisture,
@@ -136,11 +138,13 @@ def test_delete_location_removes_dependents(client, admin_headers):
     # Give it dependents: a prediction and an alert.
     client.post(
         "/api/predict",
+        headers=admin_headers,
         json={"location": "Temp Site", "rainfall": 150, "soil_moisture": 75,
               "temperature": 23, "humidity": 85, "elevation": 300, "slope": 40},
     )
     alerts = client.post(
         "/api/alerts",
+        headers=admin_headers,
         json={
             "location_id": loc_id,
             "risk_level": "HIGH",
@@ -175,6 +179,7 @@ def test_update_location_rejects_bad_coordinates(client, admin_headers):
 def test_alerts_listing_and_status_transitions(client, admin_headers):
     created = client.post(
         "/api/alerts",
+        headers=admin_headers,
         json={
             "location_id": client.get("/api/locations").json()[0]["id"],
             "risk_level": "MODERATE",
