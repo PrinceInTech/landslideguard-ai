@@ -47,6 +47,22 @@ Evidence base: `data/provenance/acquisition_manifest.json`,
     REAL model is trained and no real-world performance is claimed
     (`docs/features.md:145-161`, `docs/model.md`).
 
+> **Effective register status (supersedes the Q6 register rows below by
+> reference: §28.6, §33.4, §34.7; Q7 restated unchanged).**
+> - **Q6 CHIRPS**: research/replay evidence **recovered** and historical
+>   availability **corroborated**, as documented in §28 and §33;
+>   `provider_issued` availability is **not established**; the **Q6 production
+>   gate remains `CLOSED`**.
+> - **Q7 ERA5-Land**: remains **`EXTERNAL_EVIDENCE_REQUIRED`** (unchanged).
+> - **Temporal production features** (CHIRPS and ERA5-Land): remain
+>   **`NEEDS_EVIDENCE`**; overall production remains **`NO-GO`**.
+>
+> The Q6 `EXTERNAL_EVIDENCE_REQUIRED` references in this document (including the
+> layered verdict above and the §3 register below) are the **historical state at
+> those phases**; they are retained verbatim and superseded here by reference.
+> "Q6 `CLOSED`" means the production gate stays closed; it does not mean the Q6
+> evidence requirements are resolved.
+
 ---
 
 ## 2. Current acquired-data inventory
@@ -114,6 +130,12 @@ feature computation, `prod` = production use.
 **Net status:** Q1–Q4 and Q10 are **resolved** (three repository-evidenced, three
 engineering decisions). Q5–Q9 remain **`EXTERNAL_EVIDENCE_REQUIRED`**. No
 resolved decision depends on an invented provider fact.
+
+> **Update (supersedes the Q6 part of this net status by reference):** Q6 is now
+> research/replay-recovered, with the production gate still `CLOSED` and
+> `provider_issued` availability **not established**. See the effective-status
+> note above and §28.6/§33.4/§34.7. The Q6 row in §3 above is retained verbatim
+> as historical record.
 
 ---
 
