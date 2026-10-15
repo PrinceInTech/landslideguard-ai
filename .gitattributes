@@ -1,0 +1,16 @@
+# Canonicalize text line endings to LF so committed artifact bytes -- and the
+# provenance SHA-256s that pin them (data/provenance/manifest.json,
+# ml/model/model_meta.json) -- are identical on Windows, macOS and Linux CI.
+#
+# Without this, core.autocrlf=true on Windows materializes CRLF working copies
+# while the committed blobs (and Linux CI) are LF, so the raw-byte SHA-256
+# checks in app/services/provenance.py drift. See data/provenance/manifest.json.
+* text=auto eol=lf
+
+# Binary artifacts: never apply line-ending conversion.
+*.joblib binary
+*.png binary
+*.gz binary
+*.nc binary
+*.tif binary
+*.tiff binary

@@ -6,8 +6,8 @@
       "name": "demo-training-data",
       "path": "data/historical_landslide_data.csv",
       "role": "training-data",
-      "sha256": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
-      "size_bytes": 223559,
+      "sha256": "b8c4bad4547663d8d57f6f3bda9bed8068dcd694ed505fce105908757fcc3788",
+      "size_bytes": 222088,
       "description": "DEMO synthetic training dataset (1,470 rows, 30 locations, 8 NER states). Canonical input, pinned by ml/model/model_meta.json dataset_sha256."
     },
     {
@@ -30,16 +30,16 @@
       "name": "demo-model-meta",
       "path": "ml/model/model_meta.json",
       "role": "model-metadata",
-      "sha256": "fe7532036af886c0deb96d4687eca41176d160e72228a4b21d583eb4f4689e46",
-      "size_bytes": 2689,
+      "sha256": "f7499312caf03e5b2a43ccb024e9e047c47315a0a79f5193cac6e8b886a67eb6",
+      "size_bytes": 2593,
       "description": "Model metadata: version, libraries, hyperparameters, metrics, feature importances, label-leakage caveat."
     },
     {
       "name": "demo-locations",
       "path": "data/monitoring_locations.csv",
       "role": "locations",
-      "sha256": "5c058de0bb0ee833a8ad0f49f9b13a61a9520bb63f28c3608659813349b87f4b",
-      "size_bytes": 1655,
+      "sha256": "691ca8b1a73e69b11cd6d853152b41fb87d623ea4c34552d28b4fb6d83ec775c",
+      "size_bytes": 1624,
       "description": "30 seeding locations across the 8 NER states used by the DEMO generator."
     }
   ],
@@ -51,8 +51,8 @@
       "license_attribution": "None - generated in-repo, no third-party content (the repository has no LICENSE file)",
       "retrieved_utc": null,
       "checksum_algorithm": "sha256",
-      "source_checksum": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
-      "file_size_bytes": 223559,
+      "source_checksum": "b8c4bad4547663d8d57f6f3bda9bed8068dcd694ed505fce105908757fcc3788",
+      "file_size_bytes": 222088,
       "geographic_coverage": {
         "min_latitude": 22.882,
         "max_latitude": 27.999,

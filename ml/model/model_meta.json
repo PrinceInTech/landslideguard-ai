@@ -23,7 +23,7 @@
   },
   "trained_on": "DEMO/sample dataset (not production data)",
   "dataset": "data/historical_landslide_data.csv",
-  "dataset_sha256": "3bdd9e9cf1d907d149f8ba1d7e58094e22727a5672299bc0c2c2346b383bdabb",
+  "dataset_sha256": "b8c4bad4547663d8d57f6f3bda9bed8068dcd694ed505fce105908757fcc3788",
   "n_samples": 1470,
   "n_samples_train": 1176,
   "n_samples_test": 294,
